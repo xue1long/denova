@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "work": {
+    "title": "钟响三次",
+    "author": "原创示例",
+    "genre": "现实主义/微奇幻",
+    "language": "zh-CN"
+  },
+  "analysis": {
+    "mode": "quick",
+    "scope": "complete_work",
+    "focus": ["重复信号如何制造期待"]
+  },
+  "rights": {
+    "basis": "original_work",
+    "confirmed": true,
+    "note": "本包原创演示材料"
+  },
+  "source": {
+    "expected_chapter_ids": ["ch01", "ch02", "ch03"],
+    "chunks": [
+      {
+        "chunk_id": "c01",
+        "chapter_id": "ch01",
+        "title": "期限",
+        "locator": "第1章",
+        "content_type": "provided_text",
+        "content": "林澄得知，街角的旧书店必须在周五前筹到三万元，否则房东将收回店面。她准备卖掉父亲留下的旧印刷机。",
+        "source_note": "原创示例"
+      },
+      {
+        "chunk_id": "c02",
+        "chapter_id": "ch02",
+        "title": "账本",
+        "locator": "第2章",
+        "content_type": "provided_text",
+        "content": "雨夜，店里的钟每响一次，账本就多出一笔五百元的匿名捐款。林澄把每笔钱都记下，却不敢动用。",
+        "source_note": "原创示例"
+      },
+      {
+        "chunk_id": "c03",
+        "chapter_id": "ch03",
+        "title": "开门",
+        "locator": "第3章",
+        "content_type": "provided_text",
+        "content": "第三夜，钟声停了。邻居们带着旧书和修店工具进来，说匿名账款来自他们轮流的小额捐款。林澄把印刷机搬到门口，发起社区印书日；大家约定用劳动和订书款补足欠款。她把账本留在柜台，第一次没有锁门。",
+        "source_note": "原创示例"
+      }
+    ],
+    "source_note": "三章短例；本示例将声明范围限定为此三章"
+  }
+}

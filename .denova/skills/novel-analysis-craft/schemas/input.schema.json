@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:novel-analysis-craft:input:1.0",
+  "title": "Novel Analysis Input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "work", "analysis", "rights", "source"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "author": { "type": ["string", "null"] },
+        "genre": { "type": ["string", "null"] },
+        "language": { "type": "string", "default": "zh-CN" }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "scope"],
+      "properties": {
+        "mode": { "enum": ["quick", "standard", "deep"] },
+        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes"] },
+        "focus": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "output_format": { "enum": ["both", "json", "markdown"], "default": "both" }
+      }
+    },
+    "rights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "confirmed"],
+      "properties": {
+        "basis": {
+          "enum": ["original_work", "public_domain", "licensed", "authorized", "user_notes", "brief_excerpt_for_analysis", "unclear"]
+        },
+        "confirmed": { "type": "boolean" },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunks"],
+      "properties": {
+        "expected_chapter_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "chunks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["chunk_id", "chapter_id", "content_type", "content"],
+            "properties": {
+              "chunk_id": { "type": "string", "minLength": 1 },
+              "chapter_id": { "type": "string", "minLength": 1 },
+              "title": { "type": ["string", "null"] },
+              "locator": { "type": ["string", "null"] },
+              "content_type": { "enum": ["provided_text", "user_summary", "user_notes"] },
+              "content": { "type": "string", "minLength": 1 },
+              "source_note": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "source_note": { "type": ["string", "null"] }
+      }
+    },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "type": "object",
+          "description": "Paste the previous output JSON here, or provide it as a separate file and identify it in the user request.",
+          "additionalProperties": true
+        },
+        "new_batch_chunk_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "schema_version": "1.0",
+  "work": {
+    "title": "钟响三次",
+    "author": "原创示例",
+    "scope": "complete_work",
+    "scope_note": "本例的完整范围仅指用户声明的三章短篇示例。"
+  },
+  "run": {
+    "mode": "quick",
+    "status": "complete",
+    "updated_at": "2026-10-08T00:00:00Z",
+    "next_action": "按练习题写一段 500–1500 字原创场景，再提交评估。"
+  },
+  "coverage": {
+    "expected_chapter_ids": ["ch01", "ch02", "ch03"],
+    "received_chapter_ids": ["ch01", "ch02", "ch03"],
+    "processed_chapter_ids": ["ch01", "ch02", "ch03"],
+    "pending_chapter_ids": [],
+    "coverage_percent": 100,
+    "completeness": "complete",
+    "last_processed_chapter_id": "ch03",
+    "scope_note": "已处理此示例声明的全部章节；这不代表其他版本或更长作品。"
+  },
+  "evidence": [
+    {
+      "evidence_id": "E001",
+      "chapter_id": "ch01",
+      "chunk_id": "c01",
+      "locator": "第1章，批次 c01",
+      "paraphrase": "书店有明确的周五筹款期限和三万元目标，失败会失去店面；林澄准备卖掉父亲留下的印刷机。"
+    },
+    {
+      "evidence_id": "E002",
+      "chapter_id": "ch02",
+      "chunk_id": "c02",
+      "locator": "第2章，批次 c02",
+      "paraphrase": "钟声与每笔五百元匿名捐款重复关联，林澄记账但暂不动用。"
+    },
+    {
+      "evidence_id": "E003",
+      "chapter_id": "ch03",
+      "chunk_id": "c03",
+      "locator": "第3章，批次 c03",
+      "paraphrase": "邻居解释匿名捐款来源并带来书和工具；林澄发起社区印书日，邻居们承诺以劳动和订书款补足欠款，她不再锁门。"
+    }
+  ],
+  "stages": {
+    "skeleton": {
+      "status": "complete",
+      "gate": "pass",
+      "summary": "筹款期限触发卖印刷机的打算；匿名账款引出疑问；邻居现身后，林澄改用共同劳动和印书日回应危机。",
+      "missing_inputs": [],
+      "synopsis": "旧书店面临周五前筹款三万元的期限，林澄准备卖掉父亲留下的印刷机。雨夜里，钟声每响一次，账本便多一笔匿名捐款。第三夜钟声停下，邻居解释捐款来自轮流出资，并带来旧书和修店工具。林澄改为发起社区印书日，邻居们承诺以劳动和订书款补足欠款；她把账本留在柜台，第一次没有锁门。",
+      "one_sentence_story": "当匿名捐款打乱她卖掉父亲遗物的计划时，一位书店经营者从独自保店转向接受邻里的共同承担。",
+      "causal_beats": [
+        {
+          "beat_id": "B001",
+          "event": "书店必须在周五前筹到三万元。",
+          "causal_link": "期限和失店风险迫使林澄寻找即时资金。",
+          "consequence": "她准备卖掉父亲留下的印刷机。",
+          "evidence_refs": ["E001"]
+        },
+        {
+          "beat_id": "B002",
+          "event": "钟声与匿名捐款反复出现。",
+          "causal_link": "重复但来源未知的款项阻止林澄立即按原计划出售印刷机。",
+          "consequence": "她持续记账并等待解释。",
+          "evidence_refs": ["E002"]
+        },
+        {
+          "beat_id": "B003",
+          "event": "邻居说明捐款来源并提出共同劳动。",
+          "causal_link": "来源揭晓把匿名帮助转为可见的社区合作。",
+          "consequence": "林澄发起印书日，并打开店门。",
+          "evidence_refs": ["E003"]
+        }
+      ],
+      "structure_points": [
+        { "label": "opening", "event": "筹款期限与失店风险提出核心问题。", "chapter_id": "ch01", "evidence_refs": ["E001"] },
+        { "label": "setup", "event": "钟声和账本建立重复异常。", "chapter_id": "ch02", "evidence_refs": ["E002"] },
+        { "label": "climax", "event": "邻居现身解释捐款并加入解决方案。", "chapter_id": "ch03", "evidence_refs": ["E003"] },
+        { "label": "ending", "event": "林澄把账本留在柜台并第一次没有锁门；欠款是否已经补足没有写明。", "chapter_id": "ch03", "evidence_refs": ["E003"] }
+      ],
+      "opening_counterfactual": "若从邻居现身开始，读者会失去周五期限、卖印刷机的代价，以及对匿名账款来源的等待。"
+    },
+    "flesh": {
+      "status": "complete",
+      "gate": "pass",
+      "summary": "当前短例中，唯一明确支线是匿名捐款如何转为社区合作；角色弧线表现为从独自承担到接受共同参与。",
+      "missing_inputs": [],
+      "subplots": [
+        {
+          "name": "匿名捐款与邻里互助",
+          "chapters": ["ch02", "ch03"],
+          "characters": ["林澄", "邻居们"],
+          "function": "把重复悬念转成可执行的集体方案，并改变林澄对开门求助的态度。",
+          "deletion_test": "若删去这条线，钟声和账本的悬念失去回收，印书日也缺少邻居参与的因果来源。",
+          "evidence_refs": ["E002", "E003"]
+        }
+      ],
+      "characters": [
+        {
+          "name": "林澄",
+          "role": "主角/书店经营者",
+          "desire": "保住旧书店。",
+          "weakness_or_belief": "面对危机时先准备独自牺牲父亲留下的印刷机；这是从行动推得的解释。",
+          "pressure_pattern": "先记账、暂不动用匿名款，再提出由社区共同参与的方案。",
+          "arc": "从准备单独处置遗物，转向让邻居进入店内并共同承担；结尾是否完全改变仍可在更长文本中验证。",
+          "evidence_refs": ["E001", "E002", "E003"]
+        },
+        {
+          "name": "邻居们",
+          "role": "支持性群体角色/主要助力",
+          "desire": "帮助旧书店继续经营。",
+          "weakness_or_belief": "短例没有提供足够材料判断。",
+          "pressure_pattern": "通过轮流捐款、送书和修店工具提供具体帮助。",
+          "arc": "从匿名资助者转为公开合作伙伴。",
+          "evidence_refs": ["E003"]
+        }
+      ]
+    },
+    "soul": {
+      "status": "complete",
+      "gate": "pass",
+      "summary": "短例把“接受帮助是否会削弱自主”转化为主角是否打开店门的行动选择。",
+      "missing_inputs": [],
+      "themes": [
+        {
+          "proposition": "共同体支持可以把私人危机转成共同承担。",
+          "expression": "匿名小额捐款逐步转为邻居公开投入劳动和订单。",
+          "choice_or_cost": "林澄放弃独自出售印刷机解决问题的方案，允许邻里进入并参与。",
+          "evidence_refs": ["E001", "E003"]
+        }
+      ],
+      "emotional_arc": [
+        {
+          "from_state": "期限压迫下的独自筹款与犹疑",
+          "to_state": "对邻里共同承担的初步信任",
+          "turn_event": "邻居们解释匿名款项并带着工具和旧书到店。",
+          "plot_function": "把悬念回收转化为新行动，同时改变主角处理危机的方式。",
+          "evidence_refs": ["E001", "E002", "E003"]
+        }
+      ],
+      "strengths": ["钟声与账本构成可辨认的重复线索，最后与邻居现身相连。"],
+      "limitations": ["三章短例没有明确交代欠款是否最终补足；不能据此评价完整结局的闭环强度。"]
+    },
+    "technique": {
+      "status": "complete",
+      "gate": "pass",
+      "summary": "提取一项有来源支持的重复信号与延迟回收机制。",
+      "missing_inputs": [],
+      "technique_card_ids": ["TC001"]
+    },
+    "practice": {
+      "status": "partial",
+      "gate": "pass",
+      "summary": "练习任务和评价量表已完成；实际写作与草稿评估仍待用户提交。",
+      "missing_inputs": [],
+      "selected_card_id": "TC001",
+      "sop_ids": ["SOP001"],
+      "assignment": {
+        "technique_card_id": "TC001",
+        "prompt": "写一个原创场景：主角连续三次遇见同一种小异常，每次都让读者多一个解释；第三次用角色关系的变化回收异常。不得沿用书店、钟声、账本、匿名捐款或邻居捐款的组合。",
+        "target_length_min": 500,
+        "target_length_max": 1500,
+        "rubric": [
+          { "criterion": "重复信号清晰可辨", "score_0": "没有稳定重复信号", "score_1": "信号重复但作用相同", "score_2": "每次出现都推进期待或意义" },
+          { "criterion": "信息逐次升级", "score_0": "没有新的信息", "score_1": "增加信息但没有改变解释", "score_2": "每次都改变读者的合理预期" },
+          { "criterion": "回收有前置依据", "score_0": "结尾答案凭空出现", "score_1": "有线索但不够清楚", "score_2": "结尾重释前置细节且可回查" },
+          { "criterion": "回收改变人物关系或选择", "score_0": "答案只补充事实", "score_1": "轻微影响选择", "score_2": "答案促成可见的关系或行动变化" },
+          { "criterion": "表达与情境原创", "score_0": "复用示例的核心组合", "score_1": "更换部分表面元素", "score_2": "角色、场景、道具和措辞均形成新组合" }
+        ]
+      },
+      "draft_status": "not_submitted",
+      "draft_evaluation": null
+    }
+  },
+  "claims": [
+    { "claim_id": "C001", "stage": "skeleton", "kind": "observation", "statement": "核心外部压力有明确金额和截止时间。", "confidence": "high", "evidence_refs": ["E001"] },
+    { "claim_id": "C002", "stage": "skeleton", "kind": "observation", "statement": "钟声重复关联到账本新增款项，构成待解释的信息模式。", "confidence": "high", "evidence_refs": ["E002"] },
+    { "claim_id": "C003", "stage": "flesh", "kind": "inference", "statement": "林澄从独自承担转向接受邻居共同参与。", "confidence": "medium", "evidence_refs": ["E001", "E003"] },
+    { "claim_id": "C004", "stage": "soul", "kind": "inference", "statement": "短例把共同体支持写成对私人危机的共同承担。", "confidence": "medium", "evidence_refs": ["E002", "E003"] },
+    { "claim_id": "C005", "stage": "technique", "kind": "inference", "statement": "重复信号延迟来源解释，并在回收时连接到人物关系的变化。", "confidence": "medium", "evidence_refs": ["E002", "E003"] },
+    { "claim_id": "C006", "stage": "soul", "kind": "observation", "statement": "材料没有说明邻里承诺之后是否已补足三万元。", "confidence": "high", "evidence_refs": ["E003"] }
+  ],
+  "technique_cards": [
+    {
+      "card_id": "TC001",
+      "title": "重复信号承载升级与回收",
+      "principle": "让一个可辨认的信号反复出现并逐次增加问题，最后用有前置依据的解释改变读者对人物关系或行动的理解。",
+      "observed_action": "钟声每次响起都伴随一笔匿名捐款；第三夜钟声停止后，邻居们现身解释款项来源并参与解决方案。",
+      "reader_effect": "读者先等待重复模式和捐款来源的解释，再把悬念答案理解为邻里关系的显现。",
+      "mechanism": ["重复建立模式预期。", "延迟说明来源，保持一个具体问题。", "回收时同时改变主角的行动方式。"],
+      "counterfactual": "若只报告一次匿名捐款，读者不会形成对钟声的模式预期；若揭晓不影响林澄的选择，答案就只提供信息。",
+      "conditions": "适合需要维持短程好奇、同时让揭示推动关系或行动的故事；每次重复都应增加意义。",
+      "adaptation": "在全新场景中使用逐次变化的公共广播故障，最终揭示它让两个疏远的角色开始互相留意，并促成一次合作。",
+      "pitfalls": "重复没有升级会显得拖延；答案若缺少前置线索会像临时补丁；不要把揭示只当谜底。",
+      "evidence_refs": ["E002", "E003"],
+      "confidence": "medium",
+      "sop_id": "SOP001"
+    }
+  ],
+  "sops": [
+    {
+      "sop_id": "SOP001",
+      "name": "重复信号与关系回收",
+      "technique_card_id": "TC001",
+      "goal": "用重复异常维持期待，并让揭示改变角色行动。",
+      "use_when": "需要在一个短篇场景中建立轻量悬念，且答案能影响人物关系。",
+      "steps": [
+        "先确定主角当下要解决的具体问题。",
+        "选择一个容易辨认但不照搬来源的重复信号。",
+        "安排至少两次出现，每次增加一条不同的解释线索。",
+        "让主角因该信号作出可见选择或暂缓原计划。",
+        "提前埋入足以支撑答案的细节。",
+        "在回收时让答案改变人物关系或下一步行动。"
+      ],
+      "checks": ["每次重复是否改变读者预期？", "最终解释能否回查前置细节？", "答案是否推动角色行动？"],
+      "failure_signals": ["重复场景只增加篇幅。", "最终答案没有线索。", "揭示后人物照旧行动。"],
+      "originality_note": "更换信号、人物关系、场景、冲突和措辞；只借用信息组织机制。"
+    }
+  ],
+  "correction_log": [],
+  "quality_review": {
+    "strengths": ["所有主要判断都引用了示例材料中的证据 ID。", "覆盖结论限定为用户声明的三章。"],
+    "limitations": ["该原创微型示例无法代表长篇小说的多线结构。", "欠款最终结果没有写明（C006）。"],
+    "unresolved_questions": ["邻里合作是否足以补足三万元（C006）？", "林澄在更长故事中是否持续接受共同参与？"],
+    "checklist": {
+      "evidence_resolved": true,
+      "coverage_honest": true,
+      "five_stages_reported": true,
+      "practice_status_honest": true
+    }
+  }
+}

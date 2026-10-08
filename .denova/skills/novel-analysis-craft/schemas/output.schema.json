@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:novel-analysis-craft:output:1.0",
+  "title": "Novel Analysis Output and Checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "work", "run", "coverage", "evidence", "stages",
+    "claims", "technique_cards", "sops", "correction_log", "quality_review"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "scope"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "author": { "type": ["string", "null"] },
+        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes"] },
+        "scope_note": { "type": "string" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "status", "updated_at", "next_action"],
+      "properties": {
+        "mode": { "enum": ["quick", "standard", "deep"] },
+        "status": { "enum": ["in_progress", "partial", "complete", "blocked"] },
+        "updated_at": { "type": "string" },
+        "next_action": { "type": "string" }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_chapter_ids", "received_chapter_ids", "processed_chapter_ids",
+        "pending_chapter_ids", "coverage_percent", "completeness",
+        "last_processed_chapter_id", "scope_note"
+      ],
+      "properties": {
+        "expected_chapter_ids": { "$ref": "#/$defs/stringArray" },
+        "received_chapter_ids": { "$ref": "#/$defs/stringArray" },
+        "processed_chapter_ids": { "$ref": "#/$defs/stringArray" },
+        "pending_chapter_ids": { "$ref": "#/$defs/stringArray" },
+        "coverage_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "completeness": { "enum": ["complete", "partial", "unknown"] },
+        "last_processed_chapter_id": { "type": ["string", "null"] },
+        "scope_note": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "chapter_id", "chunk_id", "locator", "paraphrase"],
+        "properties": {
+          "evidence_id": { "type": "string", "minLength": 1 },
+          "chapter_id": { "type": "string", "minLength": 1 },
+          "chunk_id": { "type": "string", "minLength": 1 },
+          "locator": { "type": "string", "minLength": 1 },
+          "paraphrase": { "type": "string", "minLength": 1 },
+          "short_quote": { "type": "string", "maxLength": 120 }
+        }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skeleton", "flesh", "soul", "technique", "practice"],
+      "properties": {
+        "skeleton": {
+          "allOf": [
+            { "$ref": "#/$defs/stageBase" },
+            {
+              "type": "object",
+              "required": ["synopsis", "one_sentence_story", "causal_beats", "structure_points"],
+              "properties": {
+                "synopsis": { "type": "string" },
+                "one_sentence_story": { "type": "string" },
+                "causal_beats": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["beat_id", "event", "causal_link", "consequence", "evidence_refs"],
+                    "properties": {
+                      "beat_id": { "type": "string" },
+                      "event": { "type": "string" },
+                      "causal_link": { "type": "string" },
+                      "consequence": { "type": "string" },
+                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                    }
+                  }
+                },
+                "structure_points": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["label", "event", "chapter_id", "evidence_refs"],
+                    "properties": {
+                      "label": { "enum": ["opening", "setup", "climax", "ending", "unknown"] },
+                      "event": { "type": "string" },
+                      "chapter_id": { "type": ["string", "null"] },
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
+                    }
+                  }
+                },
+                "opening_counterfactual": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "flesh": {
+          "allOf": [
+            { "$ref": "#/$defs/stageBase" },
+            {
+              "type": "object",
+              "required": ["subplots", "characters"],
+              "properties": {
+                "subplots": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "chapters", "characters", "function", "deletion_test", "evidence_refs"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "chapters": { "$ref": "#/$defs/stringArray" },
+                      "characters": { "$ref": "#/$defs/stringArray" },
+                      "function": { "type": "string" },
+                      "deletion_test": { "type": "string" },
+                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                    }
+                  }
+                },
+                "characters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "role", "desire", "weakness_or_belief", "pressure_pattern", "arc", "evidence_refs"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "role": { "type": "string" },
+                      "desire": { "type": "string" },
+                      "weakness_or_belief": { "type": "string" },
+                      "pressure_pattern": { "type": "string" },
+                      "arc": { "type": "string" },
+                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "soul": {
+          "allOf": [
+            { "$ref": "#/$defs/stageBase" },
+            {
+              "type": "object",
+              "required": ["themes", "emotional_arc", "strengths", "limitations"],
+              "properties": {
+                "themes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["proposition", "expression", "choice_or_cost", "evidence_refs"],
+                    "properties": {
+                      "proposition": { "type": "string" },
+                      "expression": { "type": "string" },
+                      "choice_or_cost": { "type": "string" },
+                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                    }
+                  }
+                },
+                "emotional_arc": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["from_state", "to_state", "turn_event", "plot_function", "evidence_refs"],
+                    "properties": {
+                      "from_state": { "type": "string" },
+                      "to_state": { "type": "string" },
+                      "turn_event": { "type": "string" },
+                      "plot_function": { "type": "string" },
+                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                    }
+                  }
+                },
+                "strengths": { "$ref": "#/$defs/stringArray" },
+                "limitations": { "$ref": "#/$defs/stringArray" }
+              }
+            }
+          ]
+        },
+        "technique": {
+          "allOf": [
+            { "$ref": "#/$defs/stageBase" },
+            {
+              "type": "object",
+              "required": ["technique_card_ids"],
+              "properties": { "technique_card_ids": { "$ref": "#/$defs/stringArray" } }
+            }
+          ]
+        },
+        "practice": {
+          "allOf": [
+            { "$ref": "#/$defs/stageBase" },
+            {
+              "type": "object",
+              "required": ["selected_card_id", "sop_ids", "assignment", "draft_status", "draft_evaluation"],
+              "properties": {
+                "selected_card_id": { "type": ["string", "null"] },
+                "sop_ids": { "$ref": "#/$defs/stringArray" },
+                "assignment": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["technique_card_id", "prompt", "target_length_min", "target_length_max", "rubric"],
+                      "properties": {
+                        "technique_card_id": { "type": "string" },
+                        "prompt": { "type": "string" },
+                        "target_length_min": { "type": "integer", "minimum": 500 },
+                        "target_length_max": { "type": "integer", "maximum": 1500 },
+                        "rubric": {
+                          "type": "array",
+                          "minItems": 3,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["criterion", "score_0", "score_1", "score_2"],
+                            "properties": {
+                              "criterion": { "type": "string" },
+                              "score_0": { "type": "string" },
+                              "score_1": { "type": "string" },
+                              "score_2": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "draft_status": { "enum": ["not_submitted", "submitted_not_evaluated", "evaluated"] },
+                "draft_evaluation": { "type": ["object", "null"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "stage", "kind", "statement", "confidence", "evidence_refs"],
+        "properties": {
+          "claim_id": { "type": "string", "minLength": 1 },
+          "stage": { "enum": ["skeleton", "flesh", "soul", "technique", "practice"] },
+          "kind": { "enum": ["observation", "inference", "evaluation"] },
+          "statement": { "type": "string", "minLength": 1 },
+          "confidence": { "enum": ["high", "medium", "low"] },
+          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+        }
+      }
+    },
+    "technique_cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "card_id", "title", "principle", "observed_action", "reader_effect",
+          "mechanism", "counterfactual", "conditions", "adaptation", "pitfalls",
+          "evidence_refs", "confidence", "sop_id"
+        ],
+        "properties": {
+          "card_id": { "type": "string" },
+          "title": { "type": "string" },
+          "principle": { "type": "string" },
+          "observed_action": { "type": "string" },
+          "reader_effect": { "type": "string" },
+          "mechanism": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "counterfactual": { "type": "string" },
+          "conditions": { "type": "string" },
+          "adaptation": { "type": "string" },
+          "pitfalls": { "type": "string" },
+          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "confidence": { "enum": ["high", "medium", "low"] },
+          "sop_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "sops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sop_id", "name", "technique_card_id", "goal", "use_when", "steps", "checks", "failure_signals", "originality_note"],
+        "properties": {
+          "sop_id": { "type": "string" },
+          "name": { "type": "string" },
+          "technique_card_id": { "type": "string" },
+          "goal": { "type": "string" },
+          "use_when": { "type": "string" },
+          "steps": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "checks": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "failure_signals": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "originality_note": { "type": "string" }
+        }
+      }
+    },
+    "correction_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entity_id", "reason", "previous_statement", "revised_statement", "evidence_refs"],
+        "properties": {
+          "entity_id": { "type": "string" },
+          "reason": { "type": "string" },
+          "previous_statement": { "type": "string" },
+          "revised_statement": { "type": "string" },
+          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+        }
+      }
+    },
+    "quality_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strengths", "limitations", "unresolved_questions", "checklist"],
+      "properties": {
+        "strengths": { "$ref": "#/$defs/stringArray" },
+        "limitations": { "$ref": "#/$defs/stringArray" },
+        "unresolved_questions": { "$ref": "#/$defs/stringArray" },
+        "checklist": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evidence_resolved", "coverage_honest", "five_stages_reported", "practice_status_honest"],
+          "properties": {
+            "evidence_resolved": { "type": "boolean" },
+            "coverage_honest": { "type": "boolean" },
+            "five_stages_reported": { "type": "boolean" },
+            "practice_status_honest": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringArray": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "stageBase": {
+      "type": "object",
+      "required": ["status", "gate", "summary", "missing_inputs"],
+      "properties": {
+        "status": { "enum": ["not_started", "partial", "complete", "blocked"] },
+        "gate": { "enum": ["not_checked", "pass", "revise", "blocked"] },
+        "summary": { "type": "string" },
+        "missing_inputs": { "$ref": "#/$defs/stringArray" }
+      }
+    }
+  }
+}
