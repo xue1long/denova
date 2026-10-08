@@ -1,0 +1,305 @@
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useInteractiveStore } from '../stores/interactive-store'
+import type { TurnEvent } from '../types'
+import {
+  PersistedTurnHarness,
+  StoryStageHarness,
+  controllableInteractiveStream,
+  getStageInput,
+  resetStoryStageTestHarness,
+} from './story-stage/story-stage-test-harness'
+
+const testMocks = vi.hoisted(() => ({
+  generateInteractiveImageMock: vi.fn(),
+  getActiveInteractiveChatMock: vi.fn(),
+  recoverInteractiveAgentRuntimeMock: vi.fn(),
+  sendInteractiveMessageMock: vi.fn(),
+  streamActiveInteractiveChatMock: vi.fn(),
+  submitInteractiveAgentCommandMock: vi.fn(),
+  updateInteractiveTurnNarrativeMock: vi.fn(),
+  useSkillCommandsMock: vi.fn(),
+  useConversationConfigMock: vi.fn(),
+}))
+
+const {
+  getActiveInteractiveChatMock,
+  recoverInteractiveAgentRuntimeMock,
+  sendInteractiveMessageMock,
+  submitInteractiveAgentCommandMock,
+} = testMocks
+
+vi.mock('@/features/settings/api', () => ({
+  fetchProjectSettings: vi.fn().mockResolvedValue({ effective: {} }),
+  fetchSettings: vi.fn().mockResolvedValue({ effective: {} }),
+}))
+
+vi.mock('@/features/agent-approval/AgentApprovalProvider', () => ({
+  useAgentApprovalMode: () => ({ mode: 'write', initialized: true, saving: false, setMode: vi.fn().mockResolvedValue(true) }),
+}))
+
+vi.mock('@/features/conversation-config/use-conversation-config', () => ({
+  useConversationConfig: () => testMocks.useConversationConfigMock(),
+}))
+
+vi.mock('@/hooks/useSkillCommands', () => ({
+  useSkillCommands: (...args: unknown[]) => testMocks.useSkillCommandsMock(...args),
+}))
+
+vi.mock('../api', () => ({
+  analyzeInteractiveContext: vi.fn(),
+  compactInteractiveContext: vi.fn(),
+  generateInteractiveImage: testMocks.generateInteractiveImageMock,
+  getActiveInteractiveChat: testMocks.getActiveInteractiveChatMock,
+  removeInteractiveContextCompaction: vi.fn(),
+  recoverInteractiveAgentRuntime: testMocks.recoverInteractiveAgentRuntimeMock,
+  sendInteractiveMessage: testMocks.sendInteractiveMessageMock,
+  streamActiveInteractiveChat: testMocks.streamActiveInteractiveChatMock,
+  submitInteractiveAgentCommand: testMocks.submitInteractiveAgentCommandMock,
+  switchInteractiveTurnVersion: vi.fn(),
+  updateInteractiveTurnNarrative: testMocks.updateInteractiveTurnNarrativeMock,
+}))
+
+function conversationConfigController() {
+  return {
+    snapshot: { agent_kind: 'interactive_story', profile_id: 'default', thinking_level: 'off', approval_mode: 'write', revision: 1 },
+    initialized: true, loading: false, saving: false, error: null,
+    patch: vi.fn().mockResolvedValue(true), reload: vi.fn(),
+  }
+}
+
+beforeEach(() => {
+  resetStoryStageTestHarness(testMocks)
+  testMocks.useConversationConfigMock.mockReset().mockImplementation(conversationConfigController)
+  recoverInteractiveAgentRuntimeMock.mockReset()
+})
+
+describe('StoryStage active runtime commands', () => {
+  it('keeps the draft editable and exposes recovery when configuration loading fails', async () => {
+    const reload = vi.fn()
+    testMocks.useConversationConfigMock.mockReturnValue({
+      ...conversationConfigController(), snapshot: null, initialized: false,
+      error: 'Saved configuration is unavailable', reload,
+    })
+    const user = userEvent.setup()
+    render(<StoryStageHarness />)
+    const input = getStageInput()
+    expect(input).toHaveAttribute('contenteditable', 'true')
+    await user.type(input, '保留这段草稿')
+    expect(input).toHaveTextContent('保留这段草稿')
+    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Saved configuration is unavailable')
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    expect(reload).toHaveBeenCalledOnce()
+    expect(sendInteractiveMessageMock).not.toHaveBeenCalled()
+  })
+  it('hides text and input without unmounting them, and restores them with Escape', async () => {
+    const user = userEvent.setup()
+    const turn: TurnEvent = {
+      id: 'visual-turn', parent_id: null, branch_id: 'main', ts: '', user: 'Continue', narrative: 'A quiet station.',
+      turn_result: { state_updates: [], choices: [], presentation: { background: { item_id: 'station', asset_id: 'day', path: 'assets/day.png', name: 'Day' } } },
+    }
+    const { container } = render(<StoryStageHarness initialSnapshot={{ story_id: 'story-1', branch_id: 'main', turns: [turn], current_turn: turn, state: {} }} />)
+    const input = getStageInput()
+    const content = container.querySelector('.nova-story-stage-content')!
+    await user.click(await screen.findByRole('button', { name: '隐藏文字，欣赏舞台' }))
+    expect(input).toBeInTheDocument()
+    expect(input).not.toBeVisible()
+    expect(content).toHaveAttribute('inert')
+    expect(container.querySelector('[data-testid="story-stage-scrim"]')).toHaveStyle({ opacity: '0' })
+    await user.keyboard('{Escape}')
+    expect(input).toBeVisible()
+    expect(content).not.toHaveAttribute('inert')
+    expect(container.querySelector('[data-testid="story-stage-scrim"]')).toHaveStyle({ opacity: '0.75' })
+  })
+
+  it('resumes an idle paused turn with the exact projected interruption', async () => {
+    const user = userEvent.setup()
+    const stream = controllableInteractiveStream()
+    getActiveInteractiveChatMock.mockResolvedValue({
+      active: false,
+      pending_interruption_id: 'turn-interruption-7',
+    })
+    sendInteractiveMessageMock.mockResolvedValue(stream.readable)
+    const { unmount } = render(<StoryStageHarness />)
+
+    try {
+      const resumeButton = await screen.findByRole('button', { name: '继续生成' })
+      expect(resumeButton).toBeEnabled()
+      await user.click(resumeButton)
+
+      await waitFor(() => expect(sendInteractiveMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Continue.',
+        resume_interruption_id: 'turn-interruption-7',
+      })))
+      expect(await screen.findByText('继续生成')).toBeInTheDocument()
+    } finally {
+      unmount()
+      stream.close()
+    }
+  })
+
+  it('uses the contextual action to queue a follow-up and exposes manual steering', async () => {
+    const user = userEvent.setup()
+    const stream = controllableInteractiveStream()
+    sendInteractiveMessageMock.mockResolvedValue(stream.readable)
+
+    try {
+      render(<PersistedTurnHarness onDone={vi.fn().mockResolvedValue(undefined)} />)
+      await user.type(screen.getByPlaceholderText('你要做什么？'), '推开石门')
+      await user.click(screen.getByRole('button', { name: '发送' }))
+      await waitFor(() => expect(sendInteractiveMessageMock).toHaveBeenCalledTimes(1))
+      act(() =>
+        stream.enqueue({
+          event: 'agent_cycle_started',
+          data: JSON.stringify({
+            command_id: 'start-1',
+            delivery: 'start_turn',
+            message: '推开石门',
+            operation_id: 'operation-1',
+            cycle: 1,
+          }),
+        }),
+      )
+      await waitFor(() =>
+        expect(useInteractiveStore.getState().storyStageRuns['/tmp/book:story-1:main']?.runtime.operationId).toBe('operation-1'),
+      )
+      expect(screen.getByRole('button', { name: '中断 AI 执行' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /发送方式/ })).not.toBeInTheDocument()
+
+      const input = screen.getByPlaceholderText('你要做什么？')
+      expect(input).toHaveAttribute('contenteditable', 'true')
+      await user.type(input, '再检查门后的脚印')
+      const sendButton = screen.getByRole('button', { name: '发送' })
+      expect(sendButton).toBeEnabled()
+      expect(screen.getByRole('button', { name: '中断 AI 执行' })).toBeEnabled()
+      await user.click(sendButton)
+
+      await waitFor(() => expect(submitInteractiveAgentCommandMock).toHaveBeenCalledWith({
+        type: 'follow_up',
+        commandId: expect.any(String),
+        targetOperationId: 'operation-1',
+        storyId: 'story-1',
+        branchId: 'main',
+        input: { message: '再检查门后的脚印', styleScenes: [] },
+      }))
+      expect(sendInteractiveMessageMock).toHaveBeenCalledTimes(1)
+      expect(input).toHaveTextContent('')
+      expect(screen.getByRole('button', { name: '中断 AI 执行' })).toBeEnabled()
+      expect(screen.getByText('再检查门后的脚印')).toBeInTheDocument()
+
+      const followUp = submitInteractiveAgentCommandMock.mock.calls.find(([command]) => command.type === 'follow_up')?.[0]
+      await user.click(screen.getByRole('button', { name: '立即转向' }))
+      await waitFor(() => expect(submitInteractiveAgentCommandMock).toHaveBeenCalledWith({
+        type: 'steer_queued',
+        commandId: expect.any(String),
+        targetOperationId: 'operation-1',
+        targetCommandId: followUp.commandId,
+        storyId: 'story-1',
+        branchId: 'main',
+      }))
+    } finally {
+      stream.close()
+    }
+  })
+
+  it('pauses from the composer without tearing down the observation stream early', async () => {
+    const user = userEvent.setup()
+    const stream = controllableInteractiveStream()
+    sendInteractiveMessageMock.mockResolvedValue(stream.readable)
+
+    try {
+      render(<StoryStageHarness />)
+      await user.type(screen.getByPlaceholderText('你要做什么？'), '推开石门')
+      await user.click(screen.getByRole('button', { name: '发送' }))
+      await waitFor(() => expect(sendInteractiveMessageMock).toHaveBeenCalledTimes(1))
+      act(() =>
+        stream.enqueue({
+          event: 'agent_cycle_started',
+          data: JSON.stringify({
+            command_id: 'start-1',
+            delivery: 'start_turn',
+            message: '推开石门',
+            operation_id: 'operation-1',
+            cycle: 1,
+          }),
+        }),
+      )
+      await waitFor(() =>
+        expect(useInteractiveStore.getState().storyStageRuns['/tmp/book:story-1:main']?.runtime.operationId).toBe('operation-1'),
+      )
+      expect(screen.queryByRole('button', { name: '暂停任务' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '中断 AI 执行' }))
+
+      await waitFor(() =>
+        expect(submitInteractiveAgentCommandMock).toHaveBeenCalledWith({
+          type: 'suspend',
+          commandId: expect.any(String),
+          targetOperationId: 'operation-1',
+          storyId: 'story-1',
+          branchId: 'main',
+        }),
+      )
+      act(() =>
+        stream.enqueue({
+          event: 'chunk',
+          data: JSON.stringify({ content: '中止确认前仍可收到尾部输出。' }),
+        }),
+      )
+      expect(await screen.findByText('中止确认前仍可收到尾部输出。')).toBeInTheDocument()
+    } finally {
+      stream.close()
+    }
+  })
+
+  it('disables composer controls while a pause command is pending', async () => {
+    const user = userEvent.setup()
+    const stream = controllableInteractiveStream()
+    sendInteractiveMessageMock.mockResolvedValue(stream.readable)
+    getActiveInteractiveChatMock.mockResolvedValue({
+      active: true,
+      active_operation_id: 'operation-1',
+      queue: [],
+    })
+    let resolveSuspend!: (value: unknown) => void
+    submitInteractiveAgentCommandMock.mockImplementation(() => new Promise(resolve => { resolveSuspend = resolve }))
+    const receipt = {
+      command_id: 'abort-1',
+      operation_id: 'operation-1',
+      cursor: 9,
+    }
+
+    try {
+      render(<StoryStageHarness />)
+      await user.type(getStageInput(), '推开石门')
+      await user.click(screen.getByRole('button', { name: '发送' }))
+      await waitFor(() => expect(sendInteractiveMessageMock).toHaveBeenCalledTimes(1))
+      act(() =>
+        stream.enqueue({
+          event: 'agent_cycle_started',
+          data: JSON.stringify({
+            command_id: 'start-1',
+            delivery: 'start_turn',
+            message: '推开石门',
+            operation_id: 'operation-1',
+            cycle: 1,
+          }),
+        }),
+      )
+      const input = getStageInput()
+      const stopButton = screen.getByRole('button', { name: '中断 AI 执行' })
+      await user.click(stopButton)
+      await waitFor(() => expect(submitInteractiveAgentCommandMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'suspend' })))
+
+      expect(stopButton).toBeDisabled()
+      await user.type(input, '不能在中断后发送')
+      expect(screen.getByRole('button', { name: '中断 AI 执行' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
+      await act(async () => resolveSuspend(receipt))
+    } finally {
+      stream.close()
+    }
+  })
+
+})

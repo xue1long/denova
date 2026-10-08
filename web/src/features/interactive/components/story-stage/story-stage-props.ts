@@ -1,0 +1,41 @@
+import type { BookOpeningPreset, StoryCreateInput } from '../../opening'
+import type { GamePlanningTemplate, ImagePreset, InteractiveTurnPersistedEvent, Snapshot, StorySummary, Teller } from '../../types'
+import type { LoreItem } from '@/lib/api'
+import type { BranchCreationSource } from '../branching/model'
+import type { StoryStateDisplayPreference } from '../story-state/display-preference'
+
+/** Stable integration surface between the interactive workspace and the story stage. */
+export interface StoryStageProps {
+  active?: boolean
+  projectId: string
+  workspace?: string
+  styleSceneSuggestions?: string[]
+  stories?: StorySummary[]
+  story?: StorySummary
+  tellers?: Teller[]
+	planningTemplates?: GamePlanningTemplate[]
+  imagePresets?: ImagePreset[]
+  recentNarrativeStyleID?: string
+  narrativeStyleLoading?: boolean
+  storyId: string
+  branchId: string
+  snapshot: Snapshot | null
+  snapshotLoading?: boolean
+  loreEmpty?: boolean
+  loreItems?: LoreItem[]
+  bookOpeningPresets?: BookOpeningPreset[]
+  directorPanelVisible?: boolean
+  stateDisplayPreference?: StoryStateDisplayPreference
+  onStorySelect?: (storyId: string) => void
+  onStoryCreate?: (input: StoryCreateInput) => StorySummary | void | Promise<StorySummary | void>
+  onStorySetupUpdate?: (input: StoryCreateInput) => void | Promise<void>
+  onStoryDelete?: (storyIds: string[]) => void | Promise<void>
+  onStoryRename?: (storyId: string, title: string) => void | Promise<void>
+  onRequestLoreInit?: () => void
+  onOpenDirectorConfig?: () => void
+  onToggleDirectorPanel?: () => void
+  onRequestCreateBranch?: (source: BranchCreationSource) => void
+  onStateDisplayPreferenceChange?: (value: StoryStateDisplayPreference) => void
+  onTurnPersisted?: (event: InteractiveTurnPersistedEvent, options?: { replayed: boolean }) => Snapshot | void
+  onDone: (options?: { silent?: boolean }) => void | Promise<Snapshot | void>
+}

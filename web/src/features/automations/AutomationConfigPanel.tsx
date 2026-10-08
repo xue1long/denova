@@ -1,0 +1,225 @@
+import { Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+
+import { EmptyState } from '@/components/common/EmptyState'
+import { FormField } from '@/components/forms/form-field'
+import { FormSectionHeader } from '@/components/forms/form-section-header'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import type {
+  AutomationRunRecord,
+  AutomationTask,
+  AutomationTaskTemplate,
+  AutomationTriggerDefinition,
+} from '@/lib/api'
+import type { AutomationProjectOption } from './automation-projects'
+import { automationTaskProjectID } from './automation-projects'
+import { TriggerEditor } from './AutomationTriggerEditor'
+
+const controlClassName = 'nova-field min-h-7 w-full min-w-0 rounded-[var(--nova-radius)] border text-xs'
+
+interface AutomationConfigPanelProps {
+  activeId: string
+  activeRunId: string
+  draft: AutomationTask
+  inheritedModelProfile: string
+  modelProfileOptions: Array<{ id: string; label: string }>
+  projects: AutomationProjectOption[]
+  templates: AutomationTaskTemplate[]
+  creating: boolean
+  running: boolean
+  saving: boolean
+  onChange: (patch: Partial<AutomationTask>) => void
+  onOpenRun: (run: AutomationRunRecord) => void
+  onProjectChange: (projectId: string) => void
+  onTemplateChange: (templateId: string | null) => void
+  onRemove: () => void
+  onTriggersChange: (triggers: AutomationTriggerDefinition[]) => void
+}
+
+/** Pure automation-definition editor; persistence and navigation stay in AutomationsView. */
+export function AutomationConfigPanel({
+  activeId,
+  activeRunId,
+  draft,
+  inheritedModelProfile,
+  modelProfileOptions,
+  projects,
+  templates,
+  creating,
+  running,
+  saving,
+  onChange,
+  onOpenRun,
+  onProjectChange,
+  onTemplateChange,
+  onRemove,
+  onTriggersChange,
+}: AutomationConfigPanelProps) {
+  const { t } = useTranslation()
+  const projectId = automationTaskProjectID(draft)
+  const project = projects.find((candidate) => candidate.id === projectId)
+  const availableTemplates = templates.filter((template) => template.target_kinds.includes('workspace'))
+  const selectedTemplate = availableTemplates.find((template) => template.defaults.template === draft.template)
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--nova-border)] pb-4">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-[var(--nova-text)]">{draft.name || t('automations.newTask')}</div>
+            <div className="mt-1 truncate text-[11px] text-[var(--nova-text-faint)]">
+              {project?.name || t('automations.project.unknown')} · {draft.enabled ? t('automations.enabled') : t('automations.disabled')}
+            </div>
+          </div>
+          {activeId && (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              onClick={onRemove}
+              disabled={saving || running}
+              className="nova-nav-item h-8 shrink-0 rounded-[var(--nova-radius)] border border-[var(--nova-border)] px-3"
+              aria-label={t('automations.deleteTask')}
+            >
+              <Trash2 data-icon="inline-start" />
+              {t('automations.deleteTask')}
+            </Button>
+          )}
+        </div>
+
+        <section className="grid gap-3 border-b border-[var(--nova-border)] pb-5 md:grid-cols-2">
+          <FormField
+            label={t('automations.field.project')}
+            description={!creating ? t('automations.project.ownershipHelp') : undefined}
+          >
+            <Select value={projectId} disabled={!creating} onValueChange={onProjectChange}>
+              <SelectTrigger className={controlClassName} aria-label={t('automations.field.project')}>
+                <SelectValue placeholder={t('automations.project.choose')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {projects.map((option) => (
+                    <SelectItem key={option.id} value={option.id} disabled={option.status !== 'available'}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </FormField>
+          {creating && (
+            <FormField label={t('automations.field.template')}>
+              <Select value={selectedTemplate?.id || '__blank__'} onValueChange={(value) => onTemplateChange(value === '__blank__' ? null : value)}>
+                <SelectTrigger className={controlClassName} aria-label={t('automations.field.template')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="__blank__">{t('automations.template.blank')}</SelectItem>
+                    {availableTemplates.map((template) => (
+                      <SelectItem key={`${template.id}:${template.version}`} value={template.id}>
+                        {template.defaults.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </FormField>
+          )}
+          <FormField htmlFor="automation-name" label={t('automations.field.name')}>
+            <Input id="automation-name" value={draft.name} onChange={(event) => onChange({ name: event.target.value })} className={controlClassName} />
+          </FormField>
+          <FormField label={t('automations.field.enabled')}>
+            <div className="flex h-8 items-center gap-2">
+              <Switch
+                checked={draft.enabled}
+                onCheckedChange={(enabled) => onChange({ enabled })}
+                aria-label={t('automations.field.enabled')}
+              />
+              <span className="text-[11px] text-muted-foreground">{draft.enabled ? t('automations.enabled') : t('automations.disabled')}</span>
+            </div>
+          </FormField>
+          <FormField label={t('automations.field.modelProfile')}>
+            <Select value={draft.model_profile_id || '__inherit__'} onValueChange={(profileId) => onChange({ model_profile_id: profileId === '__inherit__' ? '' : profileId })}>
+              <SelectTrigger className={controlClassName} aria-label={t('automations.field.modelProfile')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="__inherit__">{t('automations.model.inherit', { label: inheritedModelProfile })}</SelectItem>
+                  {modelProfileOptions.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.label}</SelectItem>)}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </FormField>
+          <FormField label={t('automations.field.sessionStrategy')}>
+            <Select value={draft.session_strategy} onValueChange={(strategy) => onChange({ session_strategy: strategy as AutomationTask['session_strategy'] })}>
+              <SelectTrigger className={controlClassName} aria-label={t('automations.field.sessionStrategy')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="per_run">{t('automations.sessionStrategy.perRun')}</SelectItem>
+                  <SelectItem value="per_task">{t('automations.sessionStrategy.perTask')}</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </FormField>
+          <div className="flex items-end text-[11px] leading-5 text-[var(--nova-text-faint)]">
+            {t(draft.session_strategy === 'per_task' ? 'automations.sessionStrategy.perTaskHelp' : 'automations.sessionStrategy.perRunHelp')}
+          </div>
+          <div className="md:col-span-2">
+            <FormField label={t('automations.field.prompt')}>
+              <Textarea autoResize value={draft.prompt} onChange={(event) => onChange({ prompt: event.target.value })} aria-label={t('automations.field.prompt')} placeholder={t('automations.prompt.placeholder')} className={`${controlClassName} min-h-32 resize-y leading-5 shadow-none focus-visible:ring-0`} />
+            </FormField>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3 border-b border-[var(--nova-border)] pb-5">
+          <FormSectionHeader title={t('automations.section.triggers')} />
+          <TriggerEditor task={draft} onChange={onTriggersChange} />
+        </section>
+
+        <section className="flex flex-col gap-3 pb-5">
+          <FormSectionHeader title={t('automations.section.runs')} />
+          <AutomationRunList task={draft} activeRunId={activeRunId} onOpenRun={onOpenRun} />
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function AutomationRunList({ task, activeRunId, onOpenRun }: { task: AutomationTask; activeRunId: string; onOpenRun: (run: AutomationRunRecord) => void }) {
+  const { t } = useTranslation()
+  const runs = task.recent_runs || []
+  if (runs.length === 0) {
+    return <EmptyState variant="compact" title={t('automations.runs.empty')} className="rounded-[var(--nova-radius)] border border-[var(--nova-border)] bg-[var(--nova-surface)] text-[var(--nova-text-faint)]" />
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {runs.slice(0, 5).map((run) => (
+        <div key={run.id} className="rounded-[var(--nova-radius)] border border-[var(--nova-border)] bg-[var(--nova-surface)] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{t(`automations.runs.status.${run.status}`)}</span>
+            <span className="text-[11px] text-[var(--nova-text-faint)]">{new Date(run.started_at).toLocaleString()}</span>
+            {run.output_path && <span className="ml-auto truncate text-[11px] text-[var(--nova-text-faint)]">{run.output_path}</span>}
+            {run.session_id && (
+              <button
+                type="button"
+                onClick={() => onOpenRun(run)}
+                className={`nova-nav-item ml-auto rounded-[var(--nova-radius)] px-2 py-0.5 text-[11px] ${activeRunId === run.id ? 'is-active' : 'text-[var(--nova-text-muted)]'}`}
+              >
+                {t('automations.runs.viewTimeline')}
+              </button>
+            )}
+          </div>
+          <div className="mt-1 line-clamp-3 whitespace-pre-wrap text-[11px] leading-5 text-[var(--nova-text-muted)]">{run.error || run.summary}</div>
+        </div>
+      ))}
+    </div>
+  )
+}

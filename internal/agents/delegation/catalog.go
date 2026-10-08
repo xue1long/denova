@@ -1,0 +1,229 @@
+// Package delegation carries Denova's immutable child-Agent catalog between
+// the builder and execution adapter. The builder owns child composition; the
+// execution adapter supplies the durable Agent opener for the parent Session.
+package delegation
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/alfredxw/denova/agent"
+	agentschema "github.com/alfredxw/denova/agent/schema"
+	agenttool "github.com/alfredxw/denova/agent/tool"
+	publictools "github.com/alfredxw/denova/agent/tool/builtin"
+)
+
+// Child is one fully composed delegated Agent. Identity describes the exact
+// selector semantics and participates in the root Definition behavior key.
+type Child struct {
+	Name        string
+	Description string
+	Definition  agent.Definition
+	Identity    agentschema.CapabilityIdentity
+}
+
+// Config contains the Denova policy projection for the common delegation tools.
+// These values affect the model-visible tool contract and are fingerprinted.
+type Config struct {
+	Capability         string
+	MaxResultBytes     int
+	Parallelism        int
+	ValidationIdentity agentschema.CapabilityIdentity
+	Validate           func(context.Context, []agenttool.ToolDefinition) error `json:"-"`
+}
+
+// Catalog is deliberately unusable until an execution owner binds a durable
+// TaskExecutor. This prevents a Definition from silently advertising
+// delegation without a public Session/Run owner.
+type Catalog struct {
+	base     agenttool.Toolset
+	children []Child
+	config   Config
+	identity agentschema.CapabilityIdentity
+}
+
+func NewCatalog(base agenttool.Toolset, config Config, children ...Child) (*Catalog, error) {
+	if base == nil {
+		var err error
+		base, err = agenttool.StaticTools()
+		if err != nil {
+			return nil, fmt.Errorf("construct empty delegation base Toolset: %w", err)
+		}
+	}
+	config.Capability = strings.TrimSpace(config.Capability)
+	if config.Capability == "" || config.MaxResultBytes <= 0 || config.Parallelism <= 0 || config.Validate == nil ||
+		config.ValidationIdentity.Kind == "" || config.ValidationIdentity.Version == 0 {
+		return nil, errors.New("delegation Catalog requires capability, positive result limit, positive parallelism, and identified manifest validation")
+	}
+	resolved := make([]Child, len(children))
+	seen := make(map[string]struct{}, len(children))
+	for index, child := range children {
+		child.Name = strings.TrimSpace(child.Name)
+		child.Description = strings.TrimSpace(child.Description)
+		if child.Name == "" || child.Definition.Model == nil || child.Identity.Kind == "" || child.Identity.Version == 0 {
+			return nil, fmt.Errorf("delegation child %d is incomplete", index)
+		}
+		if _, duplicate := seen[child.Name]; duplicate {
+			return nil, fmt.Errorf("delegation child %q is duplicated", child.Name)
+		}
+		seen[child.Name] = struct{}{}
+		resolved[index] = child
+	}
+	encoded, _ := json.Marshal(struct {
+		Base               agentschema.CapabilityIdentity
+		Capability         string
+		MaxResultBytes     int
+		Parallelism        int
+		ValidationIdentity agentschema.CapabilityIdentity
+		Children           []struct {
+			Name, Description string
+			Identity          agentschema.CapabilityIdentity
+		}
+	}{
+		Base: base.Identity(), Capability: config.Capability,
+		MaxResultBytes: config.MaxResultBytes, Parallelism: config.Parallelism, ValidationIdentity: config.ValidationIdentity,
+		Children: childIdentities(resolved),
+	})
+	digest := sha256.Sum256(encoded)
+	return &Catalog{
+		base: base, children: resolved, config: config,
+		identity: agentschema.CapabilityIdentity{
+			Kind: "denova.tools.tasks", Version: 1, ConfigHash: hex.EncodeToString(digest[:]),
+		},
+	}, nil
+}
+
+func childIdentities(children []Child) []struct {
+	Name, Description string
+	Identity          agentschema.CapabilityIdentity
+} {
+	result := make([]struct {
+		Name, Description string
+		Identity          agentschema.CapabilityIdentity
+	}, len(children))
+	for index, child := range children {
+		result[index] = struct {
+			Name, Description string
+			Identity          agentschema.CapabilityIdentity
+		}{child.Name, child.Description, child.Identity}
+	}
+	return result
+}
+
+func (catalog *Catalog) Identity() agentschema.CapabilityIdentity {
+	if catalog == nil {
+		return agentschema.CapabilityIdentity{}
+	}
+	return catalog.identity
+}
+
+func (catalog *Catalog) PrepareTools(context.Context, agenttool.ToolRequest) ([]agenttool.ToolDefinition, error) {
+	return nil, errors.New("Denova delegation Catalog is not bound to a durable Agent owner")
+}
+
+func (catalog *Catalog) Children() []Child {
+	if catalog == nil {
+		return nil
+	}
+	return append([]Child(nil), catalog.children...)
+}
+
+// Parallelism returns the maximum active child Runs for one parent Session.
+func (catalog *Catalog) Parallelism() int {
+	if catalog == nil {
+		return 0
+	}
+	return catalog.config.Parallelism
+}
+
+// MaxResultBytes returns the shared bounded-context budget used for delegated
+// tool results and asynchronous task-completion projections.
+func (catalog *Catalog) MaxResultBytes() int {
+	if catalog == nil {
+		return 0
+	}
+	return catalog.config.MaxResultBytes
+}
+
+func (catalog *Catalog) Bind(executor publictools.TaskExecutor) (agenttool.Toolset, error) {
+	if catalog == nil || executor == nil {
+		return nil, errors.New("bind Denova delegation: Catalog and TaskExecutor are required")
+	}
+	tasks := publictools.Tasks(executor)
+	return &boundCatalog{catalog: catalog, tasks: tasks}, nil
+}
+
+type boundCatalog struct {
+	catalog *Catalog
+	tasks   agenttool.Toolset
+}
+
+func (bound *boundCatalog) InitializeDefinition(ctx context.Context) error {
+	if bound == nil || bound.tasks == nil {
+		return errors.New("bound Denova delegation Catalog is incomplete")
+	}
+	if initializer, ok := bound.tasks.(agent.DefinitionInitializer); ok {
+		return initializer.InitializeDefinition(ctx)
+	}
+	return nil
+}
+
+func (bound *boundCatalog) Identity() agentschema.CapabilityIdentity {
+	if bound == nil || bound.catalog == nil {
+		return agentschema.CapabilityIdentity{}
+	}
+	return bound.catalog.Identity()
+}
+
+func (bound *boundCatalog) PrepareTools(ctx context.Context, request agenttool.ToolRequest) ([]agenttool.ToolDefinition, error) {
+	if bound == nil || bound.catalog == nil || bound.tasks == nil {
+		return nil, errors.New("Denova delegation Catalog binding is incomplete")
+	}
+	base, err := bound.catalog.base.PrepareTools(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := bound.tasks.PrepareTools(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	for index := range tasks {
+		if tasks[index].Tool == nil {
+			return nil, fmt.Errorf("delegated Agent tool %d is nil", index)
+		}
+		tasks[index].Descriptor.Capability = bound.catalog.config.Capability
+		tasks[index].Descriptor.MaxResultBytes = bound.catalog.config.MaxResultBytes
+	}
+	definitions := append(base, tasks...)
+	if err := bound.catalog.config.Validate(ctx, definitions); err != nil {
+		return nil, fmt.Errorf("validate delegated Agent tool manifest: %w", err)
+	}
+	return definitions, nil
+}
+
+func AsCatalog(toolset agenttool.Toolset) (*Catalog, bool) {
+	catalog, ok := toolset.(*Catalog)
+	return catalog, ok && catalog != nil
+}
+
+// ChildDefinition selects one immutable child from a freshly rebuilt root
+// Definition. It is the only product-facing extraction seam used by cold task
+// recovery.
+func ChildDefinition(definition agent.Definition, name string) (agent.Definition, error) {
+	catalog, ok := AsCatalog(definition.Tools)
+	if !ok {
+		return agent.Definition{}, errors.New("Agent Definition has no delegated child catalog")
+	}
+	name = strings.TrimSpace(name)
+	for _, child := range catalog.children {
+		if child.Name == name {
+			return child.Definition, nil
+		}
+	}
+	return agent.Definition{}, fmt.Errorf("delegated Agent %q was not found", name)
+}

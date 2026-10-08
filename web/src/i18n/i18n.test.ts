@@ -1,0 +1,90 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import zhCN from './locales/zh-CN'
+import enUS from './locales/en-US'
+
+describe('i18n', () => {
+  afterEach(() => {
+    window.localStorage.clear()
+    setBrowserLanguage('zh-CN')
+  })
+
+  it('resolves auto from browser language', async () => {
+    const { resolveLocale } = await import('./index')
+
+    expect(resolveLocale('auto', 'zh-Hans')).toBe('zh-CN')
+    expect(resolveLocale('auto', 'en-GB')).toBe('en-US')
+  })
+
+  it('keeps locale resource keys aligned', () => {
+    expect(Object.keys(enUS).sort()).toEqual(Object.keys(zhCN).sort())
+  })
+
+  it('contains writing-agent init copy in both locales', () => {
+    const requiredKeys = [
+      'loreInit.ideTitle',
+      'loreInit.ideDescription',
+      'loreInit.ideAction',
+      'writingAgent.initPrompt',
+    ]
+
+    for (const key of requiredKeys) {
+      expect((zhCN as Record<string, string>)[key]).toBeTruthy()
+      expect((enUS as Record<string, string>)[key]).toBeTruthy()
+    }
+  })
+
+  it('boots from the locally cached configured locale before browser language', async () => {
+    vi.resetModules()
+    setBrowserLanguage('en-US')
+    window.localStorage.setItem('nova.locale.configured', 'zh-CN')
+
+    const { default: i18next, getConfiguredLocale, getResolvedLocale } = await import('./index')
+
+    expect(getConfiguredLocale()).toBe('zh-CN')
+    expect(getResolvedLocale()).toBe('zh-CN')
+    expect(i18next.language).toBe('zh-CN')
+    expect(document.documentElement.lang).toBe('zh-CN')
+  })
+
+  it('persists the configured locale after settings are loaded', async () => {
+    vi.resetModules()
+    const { setConfiguredLocale } = await import('./index')
+
+    setConfiguredLocale('en-US')
+
+    expect(window.localStorage.getItem('nova.locale.configured')).toBe('en-US')
+  })
+
+  it('uses the canonical Writing Agent and Game Agent names in both locales', () => {
+    expect(zhCN['agents.ide.title']).toBe('写作 Agent')
+    expect(zhCN['agents.interactiveStory.title']).toBe('游戏 Agent')
+    expect(zhCN['agents.subAgents.parent.ide']).toBe('写作')
+    expect(zhCN['agents.subAgents.parent.interactive_story']).toBe('游戏')
+    expect(enUS['agents.ide.title']).toBe('Writing Agent')
+    expect(enUS['agents.interactiveStory.title']).toBe('Game Agent')
+    expect(enUS['agents.subAgents.parent.ide']).toBe('Writing')
+    expect(enUS['agents.subAgents.parent.interactive_story']).toBe('Game')
+  })
+
+  it('formats user-facing times with a 24-hour clock', async () => {
+    vi.resetModules()
+    const { formatDateTime, setConfiguredLocale } = await import('./index')
+    setConfiguredLocale('en-US')
+
+    const formatted = formatDateTime(new Date(2026, 7, 26, 23, 4))
+
+    expect(formatted).toContain('23:04')
+    expect(formatted).not.toMatch(/\b(?:AM|PM)\b/i)
+  })
+})
+
+function setBrowserLanguage(language: string) {
+  Object.defineProperty(window.navigator, 'languages', {
+    configurable: true,
+    value: [language],
+  })
+  Object.defineProperty(window.navigator, 'language', {
+    configurable: true,
+    value: language,
+  })
+}

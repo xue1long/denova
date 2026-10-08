@@ -1,0 +1,120 @@
+package execution
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	agentchat "denova/internal/agents/chat"
+	agentrun "denova/internal/agents/run"
+
+	"github.com/alfredxw/denova/agent"
+	agentschema "github.com/alfredxw/denova/agent/schema"
+	agentsession "github.com/alfredxw/denova/agent/session"
+	agentcanonical "github.com/alfredxw/denova/agent/session/canonical"
+)
+
+// ProfileID is the stable product execution profile persisted in a durable
+// binding. These values are part of the existing runtime identity and must stay
+// aligned with the binding codec.
+type ProfileID string
+
+const (
+	ProfileWriting   ProfileID = "writing"
+	ProfileAgentChat ProfileID = "agent_chat"
+	ProfileGame      ProfileID = "game"
+	ProfileImage     ProfileID = "image"
+)
+
+var (
+	ErrProfileInvalid   = errors.New("agent execution profile is invalid")
+	ErrProfileDuplicate = errors.New("agent execution profile is already registered")
+	ErrProfileNotFound  = errors.New("agent execution profile is not registered")
+)
+
+// Profile identifies one Denova product adapter that can rebuild a public
+// Agent Definition from durable host data.
+type Profile interface {
+	ID() ProfileID
+}
+
+// QueuedCycleProfile rebuilds process-local dependencies for any accepted or
+// cold-recovered cycle. Every registered Denova profile must implement it.
+type QueuedCycleProfile interface {
+	Profile
+	PrepareCycle(context.Context, CycleRestoreRequest) (Cycle, error)
+}
+
+// CanonicalInputRequest is the provider-free accepted turn descriptor. It is
+// deliberately smaller than CycleRestoreRequest: implementations may append
+// the exact user input, but must not build a model, toolset, context, or UI
+// route at this admission boundary.
+type CanonicalInputRequest struct {
+	Session   agentsession.Key
+	Identity  agentschema.CapabilityIdentity
+	Binding   agentrun.RuntimeBinding
+	Kind      CommandKind
+	CommandID agentrun.CommandID
+	RunID     agentrun.OperationID
+	Cycle     int
+	Request   agentchat.ChatRequest
+	Options   agentrun.Options
+	Input     agent.Input
+}
+
+// CanonicalInputProfile returns only the canonical product adapter needed to
+// close the user-input outbox before queued cycle preparation can block.
+type CanonicalInputProfile interface {
+	Profile
+	CanonicalInput(context.Context, CanonicalInputRequest) (agentcanonical.CanonicalAdapter, error)
+}
+
+type profileRegistry struct {
+	profiles map[ProfileID]Profile
+}
+
+func newProfileRegistry(profiles []Profile) (*profileRegistry, error) {
+	registry := &profileRegistry{profiles: make(map[ProfileID]Profile, len(profiles))}
+	for index, profile := range profiles {
+		if profile == nil {
+			return nil, fmt.Errorf("%w: profile at index %d is nil", ErrProfileInvalid, index)
+		}
+		id := ProfileID(strings.TrimSpace(string(profile.ID())))
+		if !validProfileID(id) {
+			return nil, fmt.Errorf("%w: unsupported profile id %q", ErrProfileInvalid, id)
+		}
+		if _, exists := registry.profiles[id]; exists {
+			return nil, fmt.Errorf("%w: %q", ErrProfileDuplicate, id)
+		}
+		if _, ok := profile.(QueuedCycleProfile); !ok {
+			return nil, fmt.Errorf("%w: profile %q cannot prepare a cycle", ErrProfileInvalid, id)
+		}
+		if _, ok := profile.(CanonicalInputProfile); !ok {
+			return nil, fmt.Errorf("%w: profile %q has no provider-free canonical input boundary", ErrProfileInvalid, id)
+		}
+		registry.profiles[id] = profile
+	}
+	return registry, nil
+}
+
+func validProfileID(id ProfileID) bool {
+	switch id {
+	case ProfileWriting, ProfileAgentChat, ProfileGame, ProfileImage:
+		return true
+	default:
+		return false
+	}
+}
+
+func (registry *profileRegistry) profile(id string) (Profile, error) {
+	resolved := ProfileID(strings.TrimSpace(id))
+	if registry == nil {
+		return nil, fmt.Errorf("%w: %q", ErrProfileNotFound, resolved)
+	}
+	profile, ok := registry.profiles[resolved]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrProfileNotFound, resolved)
+	}
+	return profile, nil
+}

@@ -1,0 +1,605 @@
+import { closeMobilePanes } from '@/components/layout/mobile-pane-events'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Bot, Brain, Cpu, FolderOpen, ScrollText, Wrench } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { ConfigManagerChat } from '@/components/Chat/ConfigManagerChat'
+import { ConfigManagerToggle } from '@/components/Chat/ConfigManagerToggle'
+import { AutosaveStatusIndicator } from '@/components/forms/autosave-status'
+import { ResourceWorkspace, useResponsiveAgentOpen } from '@/components/layout/resource-workspace'
+import { FeaturePageShell } from '@/components/layout/feature-page-shell'
+import { SidebarVisibilityToggle } from '@/components/layout/sidebar-visibility-toggle'
+import { Button } from '@/components/ui/button'
+import { LoadingState } from '@/components/common/LoadingState'
+import type { AgentContextOverride, AgentDelegationPolicy, AgentModelOverride, AgentPromptOverride, AgentRuntimeKind, AgentSkillOverride, AgentSkillPolicy, AgentToolOverride, CustomAgentConfig, Settings, SettingsLayer } from '@/features/settings/types'
+import { useLayeredSettingsDraft } from '@/features/settings/use-layered-settings-draft'
+import { getSkills, resourceTargetKey } from '@/lib/api'
+import type { ResourceTarget, SkillSummary } from '@/lib/api'
+import { AgentRuntimeContextSection } from './AgentRuntimeContextSection'
+import { AgentEngineSection } from './AgentEngineSection'
+import { resolveRuntimePreferences, type RuntimePreferences, type ConfigurationSectionID, type EngineDescriptor } from '@/features/agent-runtime/types'
+import { AgentCheckpointSection } from './AgentCheckpointSection'
+import { AgentBuiltInCapabilitySection, AgentContextSection, AgentImageModelSection, AgentModelSection, AgentPromptSection, AgentToolSection, mergeAgentModelOverride, mergeAgentPromptOverride } from './agent-configuration-sections'
+import { AgentConfigurationDisclosure } from './agent-configuration-disclosure'
+import { AGENTS, toolDefinitionsFromManifest } from './agent-registry'
+import type { SubAgentParentKey, ToolKey, VisibleAgentKey } from './agent-registry'
+import { AgentSubAgentSection } from './agent-subagent-section'
+import { runtimeKindForContract } from './agent-contracts'
+import { buildImageProfileOptions, buildProfileOptions, cloneBuiltInAgent, resolveInheritedImageProfileID, skillOverrideToPolicy } from './agent-definition-state'
+import { AgentContextBindingsSection, AgentDelegationPolicySection, AgentSkillPolicySection, AgentToolGuidanceSection, CustomAgentBehaviorSection } from './custom-agent-definition-sections'
+import {
+  AgentHeader,
+  AgentList,
+  CreateCustomAgentDialog,
+  CustomAgentIdentitySection,
+  findCustomAgent,
+  isVisibleCustomAgent,
+  mergeCustomAgentViews,
+  updateCustomAgent,
+  type AgentSelectionID,
+} from './custom-agent-management'
+import type { ToolNavigationIntent } from '@/components/Chat/tool-navigation'
+
+const tabCls = 'nova-nav-item rounded-[var(--nova-radius)] px-2.5 py-1 text-xs'
+export function AgentsView({ target, toolNavigationIntent }: { target: ResourceTarget; toolNavigationIntent?: ToolNavigationIntent | null }) {
+  const { t } = useTranslation()
+  const targetKind = target.kind
+  const projectId = target.kind === 'project' ? target.projectId : ''
+  const resourceTarget = useMemo<ResourceTarget>(
+    () => targetKind === 'project' ? { kind: 'project', projectId } : { kind: 'global' },
+    [projectId, targetKind],
+  )
+  const targetKey = resourceTargetKey(resourceTarget)
+  const [activeSelection, setActiveSelection] = useState<AgentSelectionID>('ide')
+  const [selectedLayer, setActiveLayer] = useState<SettingsLayer>('user')
+  const customSelection = activeSelectionIDIsCustom(activeSelection)
+  const activeLayer: SettingsLayer = customSelection ? 'user' : (targetKind === 'project' ? selectedLayer : 'user')
+  const agentAvailable = activeLayer === 'user' || targetKind === 'project'
+  const { layered, draft, setDraft, error, autosaveStatus, autosaveError, reload, saveNow } = useLayeredSettingsDraft({
+    target: resourceTarget,
+    layer: activeLayer,
+    sourcePrefix: 'agents-view',
+  })
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createRuntimeKind, setCreateRuntimeKind] = useState<AgentRuntimeKind>('ide')
+  const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [engines, setEngines] = useState<EngineDescriptor[]>([])
+  const [agentChatOpen, setAgentChatOpen] = useResponsiveAgentOpen()
+  const [sidebarVisible, setSidebarVisible] = useState(true)
+  const toolNavigationNonceRef = useRef(0)
+  const configurationRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const intent = toolNavigationIntent
+    if (!intent || intent.nonce === toolNavigationNonceRef.current || intent.target.kind !== 'config_resource' || intent.target.resource !== 'agent_profile') return
+    const fixedAgent = AGENTS.find((agent) => agent.key === intent.target.id)
+    if (fixedAgent) setActiveSelection(fixedAgent.key)
+    else if (layered?.effective.custom_agents?.some((agent) => agent.id === intent.target.id)) setActiveSelection(`custom:${intent.target.id}`)
+    else return
+    toolNavigationNonceRef.current = intent.nonce
+    if (intent.target.scope === 'workspace' && targetKind === 'project') setActiveLayer('workspace')
+    else if (intent.target.scope === 'user') setActiveLayer('user')
+  }, [layered?.effective.custom_agents, targetKind, toolNavigationIntent?.nonce])
+
+  useEffect(() => {
+    const target = toolNavigationIntent?.target
+    if (!layered || target?.kind !== 'config_resource' || target.resource !== 'agent_profile' || target.section !== 'runtime'
+      || target.id !== activeSelection.replace(/^custom:/, '') || (target.scope === 'user' && activeLayer !== 'user')) return
+    const section = configurationRef.current?.querySelector<HTMLElement>('[data-agent-configuration-section="runtime"], [data-agent-configuration-section="model"]')
+    section?.scrollIntoView({ block: 'start' })
+    section?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+  }, [Boolean(layered), activeSelection, activeLayer, toolNavigationIntent?.nonce])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadSkills = () => {
+      getSkills(resourceTarget)
+        .then((snapshot) => {
+          if (!cancelled) setSkills(snapshot.skills.filter((skill) => skill.active))
+        })
+        .catch((error) => {
+          if (!cancelled) console.warn('[agents] load skills failed', error)
+        })
+    }
+    const onSkillsUpdated = (event: Event) => {
+      const changedTargetKey = (event as CustomEvent<{ targetKey?: string }>).detail?.targetKey
+      if (changedTargetKey && changedTargetKey !== targetKey && changedTargetKey !== 'global') return
+      loadSkills()
+    }
+    loadSkills()
+    window.addEventListener('nova:skills-updated', onSkillsUpdated)
+    return () => {
+      cancelled = true
+      window.removeEventListener('nova:skills-updated', onSkillsUpdated)
+    }
+  }, [resourceTarget, targetKey])
+
+  const effective = layered?.effective ?? {}
+  const customAgentID = activeSelection.startsWith('custom:') ? activeSelection.slice('custom:'.length) : ''
+  const effectiveCustomAgents = mergeCustomAgentViews(effective.custom_agents, draft.custom_agents).filter(isVisibleCustomAgent)
+  const selectedCustomAgent = effectiveCustomAgents.find((agent) => agent.id === customAgentID)
+  const activeAgent = (runtimeKindForContract(selectedCustomAgent?.contract) ?? (customAgentID ? 'ide' : activeSelection)) as VisibleAgentKey
+  const selected = AGENTS.find((agent) => agent.key === activeAgent) ?? AGENTS[0]
+  const layerCustomAgent = findCustomAgent(draft, customAgentID)
+  const inheritedSettings = layered?.inherited?.[activeLayer] ?? {}
+  const inheritedCustomAgent = findCustomAgent(inheritedSettings, customAgentID)
+  const profileOptions = useMemo(() => buildProfileOptions(draft, effective, t), [draft, effective, t])
+  const imageProfileOptions = useMemo(() => buildImageProfileOptions(draft, effective, t), [draft, effective, t])
+  const baseInheritedModel = mergeAgentModelOverride(inheritedSettings.agent_models?.default ?? {}, inheritedSettings.agent_models?.[activeAgent] ?? {})
+  const modelValue = selectedCustomAgent ? layerCustomAgent?.model ?? selectedCustomAgent.model ?? {} : draft.agent_models?.[activeAgent] ?? {}
+  const engineAgent = activeAgent === 'ide' || activeAgent === 'general' || activeAgent === 'interactive_story' ? activeAgent : null
+  const engineValue = selectedCustomAgent ? layerCustomAgent?.runtime ?? selectedCustomAgent.runtime ?? {} : (engineAgent ? draft.agent_runtimes?.[engineAgent] ?? {} : {})
+  const inheritedEngine = selectedCustomAgent ? {} : (engineAgent ? inheritedSettings.agent_runtimes?.[engineAgent] ?? {} : {})
+  const resolvedEngine = resolveRuntimePreferences(inheritedEngine, engineValue)
+  const configuration = layered?.agent_configuration?.[selectedCustomAgent?.id ?? activeAgent]
+  const sections = configuration && configuration.selected === resolvedEngine.selected ? configuration.sections
+    : engines.find((engine) => engine.id === resolvedEngine.selected)?.configuration_sections
+  const editable = (id: ConfigurationSectionID) => !engineAgent || sections?.some((section) => section.id === id && section.state === 'editable') === true
+  const inheritedModel = selectedCustomAgent ? {} : baseInheritedModel
+  const baseInheritedPrompt = mergeAgentPromptOverride(inheritedSettings.agent_prompts?.default ?? {}, inheritedSettings.agent_prompts?.[activeAgent] ?? {})
+  const promptValue = draft.agent_prompts?.[activeAgent] ?? {}
+  const inheritedPrompt = baseInheritedPrompt
+  const toolValue = selectedCustomAgent ? layerCustomAgent?.tools ?? selectedCustomAgent.tools ?? {} : draft.agent_tools?.[activeAgent] ?? {}
+  const resolvedToolManifest = layered?.resolved_agent_tool_manifests?.[selectedCustomAgent?.id ?? activeAgent]
+    ?? layered?.resolved_agent_tool_manifests?.[activeAgent]
+  const toolRows = useMemo(() => toolDefinitionsFromManifest(resolvedToolManifest), [resolvedToolManifest])
+  const configuredToolRows = useMemo(() => toolRows.map((row) => ({ ...row, allowed: toolValue[row.key] ?? row.allowed })), [toolRows, toolValue])
+  const activeToolRows = editable('native.permissions') ? configuredToolRows
+    : toolDefinitionsFromManifest(configuration?.selected === resolvedEngine.selected ? configuration?.tool_manifest : undefined)
+  const skillsAllowed = Boolean(configuredToolRows.find((tool) => tool.key === 'skills')?.allowed ?? false)
+  const skillValue = draft.agent_skills?.[activeAgent] ?? {}
+  const builtInSkillPolicy = skillOverrideToPolicy(skillValue)
+  const contextValue = selectedCustomAgent ? layerCustomAgent?.runtime_context ?? selectedCustomAgent.runtime_context ?? {} : draft.agent_context?.[activeAgent] ?? {}
+  const resolvedContext = layered?.resolved_agent_contexts?.[selectedCustomAgent?.id ?? activeAgent]
+    ?? layered?.resolved_agent_contexts?.[activeAgent]
+  const promptSources = layered?.builtin_agent_prompt_sources?.[activeAgent]?.sources
+  const compactionSources = layered?.builtin_agent_compaction_sources?.[activeAgent]?.sources
+  const runtimeContract = promptSources?.find((source) => source.id === 'runtime_contract')?.content
+  const outputProtocol = promptSources?.find((source) => source.id === 'output_protocol')?.content
+  const customSkillPolicy = layerCustomAgent?.skill_policy ?? selectedCustomAgent?.skill_policy ?? { mode: 'managed' }
+  const customDelegation = layerCustomAgent?.delegation ?? selectedCustomAgent?.delegation ?? { mode: 'compatible' }
+  const customContextBindings = layerCustomAgent?.context_bindings ?? selectedCustomAgent?.context_bindings ?? []
+  const customToolGuidance = layerCustomAgent?.tool_guidance ?? selectedCustomAgent?.tool_guidance ?? {}
+  const subAgentParent = isSubAgentParent(activeAgent) ? activeAgent as SubAgentParentKey : undefined
+  const inheritedImageProfileID = selectedCustomAgent
+    ? inheritedCustomAgent?.image_api_profile_id || resolveInheritedImageProfileID(layered, activeLayer)
+    : resolveInheritedImageProfileID(layered, activeLayer)
+  const activeAgentTitle = selectedCustomAgent?.name || t(selected.titleKey)
+  const showModelConfiguration = Boolean(selectedCustomAgent) || isStandaloneModelAgent(activeAgent)
+  const enabledToolCount = activeToolRows.filter((tool) => tool.allowed).length
+  const modelProfileID = modelValue.profile_id || inheritedModel.profile_id || 'default'
+  const modelSummary = profileOptions.find((profile) => profile.id === modelProfileID)?.label ?? modelProfileID
+  const capabilitySummary = selected.capabilityMode === 'tools'
+    ? t('agents.module.capabilitiesSummary', { count: enabledToolCount })
+    : t('agents.module.builtInCapabilitiesSummary')
+  const contextSummary = resolvedContext
+    ? t('agents.module.contextSummary', {
+        threshold: Math.round(resolvedContext.compaction_threshold * 100),
+        toolResults: t(resolvedContext.tool_result_context_enabled ? 'agents.option.on' : 'agents.option.off'),
+      })
+    : t('agents.module.contextFallbackSummary')
+  const configurationContext = useMemo(() => ({
+    active_settings_layer: activeLayer,
+    active_agent: selectedCustomAgent?.id ?? activeAgent,
+    active_agent_title: activeAgentTitle,
+    write_scope_required: 'true',
+    write_scope_hint: activeLayer,
+  }), [activeAgent, activeAgentTitle, activeLayer, selectedCustomAgent?.id])
+
+  const reloadAfterAgentMutation = useCallback(() => {
+    void saveNow()
+      .then(async () => {
+        await reload(true)
+      })
+      .catch(() => undefined)
+  }, [reload, saveNow])
+
+  const switchLayer = async (layer: SettingsLayer) => {
+    if (layer === activeLayer) return
+    try {
+      await saveNow()
+      setActiveLayer(layer)
+    } catch {
+      // The layered settings hook already exposes the actionable save error.
+    }
+  }
+
+  const setAgentModel = (patch: Partial<AgentModelOverride>) => {
+    if (selectedCustomAgent) {
+      setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, model: { ...(agent.model ?? {}), ...patch } })))
+      return
+    }
+    setDraft((current) => ({
+      ...current,
+      agent_models: {
+        ...(current.agent_models ?? {}),
+        [activeAgent]: { ...(current.agent_models?.[activeAgent] ?? {}), ...patch },
+      },
+    }))
+  }
+
+  const setAgentTool = (key: ToolKey, value: boolean | null) => {
+    if (selectedCustomAgent) {
+      setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => {
+        const tools: AgentToolOverride = { ...(agent.tools ?? {}) }
+        if (value === null) delete tools[key]
+        else tools[key] = value
+        return { ...agent, tools }
+      }))
+      return
+    }
+    setDraft((current) => {
+      const nextAgentTools = { ...(current.agent_tools ?? {}) }
+      const nextOverrides: AgentToolOverride = { ...(nextAgentTools[activeAgent] ?? {}) }
+      if (value === null) delete nextOverrides[key]
+      else nextOverrides[key] = value
+      nextAgentTools[activeAgent] = nextOverrides
+      return { ...current, agent_tools: nextAgentTools }
+    })
+  }
+
+  const setAgentContext = (patch: Partial<AgentContextOverride>) => {
+    if (selectedCustomAgent) {
+      setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, runtime_context: { ...(agent.runtime_context ?? {}), ...patch } })))
+      return
+    }
+    setDraft((current) => ({
+      ...current,
+      agent_context: {
+        ...(current.agent_context ?? {}),
+        [activeAgent]: { ...(current.agent_context?.[activeAgent] ?? {}), ...patch },
+      },
+    }))
+  }
+
+  const selectAgent = (selection: AgentSelectionID) => {
+    void saveNow().then(() => {
+      if (activeLayer === 'workspace' && activeSelectionIDIsCustom(selection)) setActiveLayer('user')
+      setActiveSelection(selection)
+      closeMobilePanes()
+    }).catch(() => undefined)
+  }
+
+  const setEngine = (runtime: RuntimePreferences) => {
+    if (selectedCustomAgent) {
+      setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, runtime })))
+    } else if (engineAgent) {
+      setDraft((current) => ({ ...current, agent_runtimes: { ...current.agent_runtimes, [engineAgent]: runtime } }))
+    }
+  }
+
+  const openCreateAgent = (runtimeKind: AgentRuntimeKind) => {
+    const open = () => {
+      setActiveLayer('user')
+      setCreateRuntimeKind(runtimeKind)
+      closeMobilePanes()
+      setCreateOpen(true)
+    }
+    if (activeLayer === 'workspace') {
+      void saveNow().then(open).catch(() => undefined)
+      return
+    }
+    open()
+  }
+
+  const setImageProfile = (profileID: string) => {
+    if (selectedCustomAgent) {
+      setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, image_api_profile_id: profileID })))
+      return
+    }
+    setDraft((current) => ({ ...current, default_image_api_profile_id: profileID }))
+  }
+
+  const setAgentPrompt = (patch: Partial<AgentPromptOverride>) => {
+    setDraft((current) => ({
+      ...current,
+      agent_prompts: {
+        ...(current.agent_prompts ?? {}),
+        [activeAgent]: { ...(current.agent_prompts?.[activeAgent] ?? {}), ...patch },
+      },
+    }))
+  }
+
+  const archiveCustomAgent = () => {
+    if (!selectedCustomAgent) return
+    setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, enabled: false })))
+    setActiveSelection(runtimeKindForContract(selectedCustomAgent.contract) ?? 'ide')
+  }
+
+  const setCustomIdentity = (patch: Partial<Pick<CustomAgentConfig, 'name' | 'description'>>) => {
+    if (!selectedCustomAgent) return
+    setDraft((current) => updateCustomAgent(current, selectedCustomAgent, (agent) => ({ ...agent, ...patch })))
+  }
+
+  const updateSelectedCustomAgent = (mutate: (agent: CustomAgentConfig) => CustomAgentConfig) => {
+    if (!selectedCustomAgent) return
+    setDraft((current) => updateCustomAgent(current, selectedCustomAgent, mutate))
+  }
+
+  const setCustomSkillPolicy = (policy: AgentSkillPolicy) => updateSelectedCustomAgent((agent) => ({ ...agent, skill_policy: policy }))
+  const setCustomDelegation = (delegation: AgentDelegationPolicy) => updateSelectedCustomAgent((agent) => ({ ...agent, delegation }))
+
+  const setBuiltInSkillPolicy = (policy: AgentSkillPolicy) => {
+    const next = new Map<string, boolean>()
+    for (const name of policy.pinned ?? []) next.set(name, true)
+    for (const name of policy.blocked ?? []) next.set(name, false)
+    setDraft((current) => ({
+      ...current,
+      agent_skills: { ...(current.agent_skills ?? {}), [activeAgent]: Object.fromEntries(next) as AgentSkillOverride },
+    }))
+  }
+
+  const setGeneralSubAgent = (agent: SubAgentParentKey, value: boolean | null) => {
+    setDraft((current) => ({
+      ...current,
+      general_sub_agents: { ...(current.general_sub_agents ?? {}), [agent]: value },
+    }))
+  }
+
+  const setSubAgents = (updater: (current: NonNullable<Settings['sub_agents']>) => NonNullable<Settings['sub_agents']>) => {
+    setDraft((current) => ({ ...current, sub_agents: updater(current.sub_agents ?? []) }))
+  }
+
+  return (
+    <FeaturePageShell
+      mobileHeader={agentChatOpen ? 'hidden' : 'toolbar'}
+      icon={Bot}
+      title="Agents"
+      leadingContent={(
+        <SidebarVisibilityToggle
+          visible={sidebarVisible}
+          onToggle={() => setSidebarVisible((visible) => !visible)}
+        />
+      )}
+      className="bg-[var(--nova-bg)]"
+      topbarClassName="max-md:flex-wrap max-md:overflow-x-hidden"
+      error={error}
+      errorTitle={t('agents.saveError')}
+      onSaveShortcut={() => saveNow().catch(() => undefined)}
+      headerContent={(
+        <div className="flex shrink-0 gap-1 border-l border-[var(--nova-border)] pl-2 sm:ml-3 sm:pl-3">
+          {(targetKind === 'project' && !selectedCustomAgent ? ['user', 'workspace'] as SettingsLayer[] : ['user'] as SettingsLayer[]).map((layer) => (
+            <Button
+              key={layer}
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => void switchLayer(layer)}
+              className={`${tabCls} ${activeLayer === layer ? 'is-active' : 'bg-[var(--nova-surface-2)] text-[var(--nova-text-muted)]'}`}
+            >
+              {layer === 'workspace' ? t('agents.layer.workspace') : t('agents.layer.user')}
+            </Button>
+          ))}
+        </div>
+      )}
+      actions={(
+        <>
+          <AutosaveStatusIndicator
+            status={autosaveStatus}
+            error={autosaveError}
+            onRetry={() => saveNow().catch(() => undefined)}
+          />
+          {agentAvailable && (
+            <ConfigManagerToggle
+              open={agentChatOpen}
+              label={t('agents.configAgent.button')}
+              onToggle={() => setAgentChatOpen((value) => !value)}
+            />
+          )}
+        </>
+      )}
+    >
+      {!layered ? (
+        <LoadingState label={t('common.loading')} className="min-h-0 flex-1" />
+      ) : (
+      <ResourceWorkspace
+        title={'Agents'}
+        secondaryView={{ label: t('workbench.mobile.agent'), available: agentAvailable, open: agentChatOpen, onOpenChange: setAgentChatOpen }}
+        left={{
+          id: 'agents-list',
+          title: 'Agents',
+          side: 'left',
+          icon: <Bot className="h-4 w-4" />,
+          content: (
+            <AgentList
+              active={activeSelection}
+              customAgents={effectiveCustomAgents}
+              onSelect={selectAgent}
+              onCreate={openCreateAgent}
+            />
+          ),
+          desktopClassName: 'min-h-0 border-r border-[var(--nova-border)]',
+          desktopVisible: sidebarVisible,
+          mobileClassName: 'w-[min(88vw,340px)]',
+        }}
+        right={agentAvailable && agentChatOpen ? {
+          id: 'agents-config-manager',
+          title: t('agents.configAgent.title'),
+          side: 'right',
+          icon: <Bot className="h-4 w-4" />,
+          content: (
+            <div className="h-full min-h-0 bg-[var(--nova-surface)]">
+              <ConfigManagerChat
+                projectId={activeLayer === 'user' ? 'agents' : projectId}
+                origin="agents"
+                resourceId={`${activeLayer}:${activeAgent}`}
+                context={configurationContext}
+                onMutated={reloadAfterAgentMutation}
+              />
+            </div>
+          ),
+          desktopClassName: 'min-h-0 border-l border-[var(--nova-border)]',
+          mobileClassName: 'w-[min(92vw,420px)]',
+        } : undefined}
+        className="flex-1 text-xs"
+        mainClassName="min-h-0 min-w-0"
+        leftResize={{
+          layoutKey: 'nova-agents-list-layout',
+          label: t('layout.resize.sidebar'),
+          defaultSize: '288px',
+          minSize: '220px',
+          maxSize: '40%',
+        }}
+        rightResize={{
+          layoutKey: 'nova-agents-config-manager-layout',
+          label: t('layout.resize.right'),
+          defaultSize: '420px',
+          minSize: '300px',
+          maxSize: '65%',
+          mainMinSize: '240px',
+        }}
+      >
+        {() => (
+          <main ref={configurationRef} className="h-full min-h-0 overflow-y-auto overflow-x-hidden">
+            <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6">
+              <AgentHeader agent={selected} customAgent={selectedCustomAgent} onArchive={selectedCustomAgent ? archiveCustomAgent : undefined} />
+              {selectedCustomAgent ? <CustomAgentIdentitySection agent={selectedCustomAgent} value={layerCustomAgent} onChange={setCustomIdentity} /> : null}
+              {engineAgent ? <AgentEngineSection key={`engine:${targetKey}:${activeLayer}:${activeSelection}:${toolNavigationIntent?.nonce ?? 0}`} value={engineValue} inherited={inheritedEngine} onChange={setEngine} beforeSwitch={saveNow} onCatalog={setEngines} /> : (
+                <AgentConfigurationDisclosure key={`runtime:${activeSelection}:${toolNavigationIntent?.nonce ?? 0}`} id="runtime" icon={Cpu}
+                  title={t('agentRuntime.title')} summary={t('agentRuntime.native')} defaultOpen>
+                  <p className="text-xs text-muted-foreground">{t('agentRuntime.nativeOnly')}</p>
+                </AgentConfigurationDisclosure>
+              )}
+              {showModelConfiguration && editable('native.model') ? (
+                <AgentConfigurationDisclosure
+                  key={`model:${activeSelection}:${toolNavigationIntent?.nonce ?? 0}`}
+                  id="model"
+                  icon={Brain}
+                  title={t('agents.module.model')}
+                  summary={modelSummary}
+                  defaultOpen={!selectedCustomAgent || (toolNavigationIntent?.target.kind === 'config_resource' && toolNavigationIntent.target.section === 'runtime')}
+                >
+                  {activeLayer === 'user' ? <AgentModelSection value={modelValue} inherited={inheritedModel} profiles={profileOptions} onChange={setAgentModel} /> : (
+                    <section className="border-b border-[var(--nova-border)] pb-5 text-xs text-[var(--nova-text-muted)]">{t('agents.model.userScoped')}</section>
+                  )}
+                  {activeAgent === 'image' && activeLayer === 'user' ? <AgentImageModelSection
+                    value={selectedCustomAgent ? layerCustomAgent?.image_api_profile_id ?? selectedCustomAgent.image_api_profile_id ?? '' : draft.default_image_api_profile_id ?? ''}
+                    inherited={inheritedImageProfileID}
+                    profiles={imageProfileOptions}
+                    onChange={setImageProfile}
+                  /> : null}
+                </AgentConfigurationDisclosure>
+              ) : null}
+              <AgentConfigurationDisclosure
+                key={`behavior:${activeSelection}`}
+                id="behavior"
+                icon={ScrollText}
+                title={t('agents.module.behavior')}
+                summary={t('agents.module.behaviorSummary')}
+                defaultOpen={!isStandaloneModelAgent(activeAgent)}
+              >
+                {selectedCustomAgent ? <CustomAgentBehaviorSection
+                  instructions={layerCustomAgent?.instructions ?? selectedCustomAgent.instructions ?? ''}
+                  runtimeContract={runtimeContract}
+                  outputProtocol={outputProtocol}
+                  onChange={(instructions) => updateSelectedCustomAgent((agent) => ({ ...agent, instructions }))}
+                /> : <AgentPromptSection
+                  value={promptValue}
+                  inherited={inheritedPrompt}
+                  builtin={layered.builtin_agent_prompts?.[activeAgent]?.system_prompt ?? ''}
+                  blocks={layered.builtin_agent_prompt_blocks?.[activeAgent]}
+                  sources={promptSources}
+                  onChange={setAgentPrompt}
+                />}
+              </AgentConfigurationDisclosure>
+              {selected.capabilityMode !== 'model_only' ? (
+                <AgentConfigurationDisclosure
+                  key={`capabilities:${activeSelection}`}
+                  id="capabilities"
+                  icon={Wrench}
+                  title={t('agents.module.capabilities')}
+                  summary={capabilitySummary}
+                >
+                  {selected.capabilityMode === 'tools' ? <>
+                    {editable('native.permissions') ? <AgentToolSection value={toolValue} rows={configuredToolRows} onChange={setAgentTool} /> : null}
+                    {!editable('native.permissions') ? <ul className="grid gap-2 sm:grid-cols-2">{activeToolRows.filter((row) => row.allowed).map((row) => <li key={row.key}><span className="font-medium">{t(row.titleKey)}</span><span className="ml-2 break-words text-muted-foreground">{row.toolNames.join(', ')}</span></li>)}</ul> : null}
+                    {selectedCustomAgent ? <AgentToolGuidanceSection rows={activeToolRows} value={customToolGuidance} onChange={(tool_guidance) => updateSelectedCustomAgent((agent) => ({ ...agent, tool_guidance }))} /> : null}
+                    {editable('shared.skills') && (skillsAllowed || !editable('native.permissions')) ? <AgentSkillPolicySection
+                      skills={skills}
+                      value={selectedCustomAgent ? customSkillPolicy : builtInSkillPolicy}
+                      allowExplicit={Boolean(selectedCustomAgent)}
+                      onChange={selectedCustomAgent ? setCustomSkillPolicy : setBuiltInSkillPolicy}
+                    /> : null}
+                    {selectedCustomAgent && editable('native.subagents') ? <AgentDelegationPolicySection value={customDelegation} runtimeKind={activeAgent} subAgents={effective.sub_agents ?? []} onChange={setCustomDelegation} /> : null}
+                    {!selectedCustomAgent && subAgentParent && editable('native.subagents') ? <AgentSubAgentSection
+                      agent={subAgentParent}
+                      toolRows={configuredToolRows}
+                      generalSettings={draft.general_sub_agents}
+                      effectiveGeneralSettings={effective.general_sub_agents}
+                      subAgents={draft.sub_agents ?? []}
+                      effectiveSubAgents={effective.sub_agents ?? []}
+                      profiles={profileOptions}
+                      onGeneralChange={setGeneralSubAgent}
+                      onChange={setSubAgents}
+                    /> : null}
+                  </> : <AgentBuiltInCapabilitySection agent={selected.key} />}
+                </AgentConfigurationDisclosure>
+              ) : null}
+              <AgentConfigurationDisclosure
+                key={`context:${activeSelection}`}
+                id="context"
+                icon={FolderOpen}
+                title={t('agents.module.context')}
+                summary={editable('native.context_policy') ? contextSummary : t('agentRuntime.sharedInputBudget')}
+              >
+                {resolvedContext && editable('shared.input_budget') ? <AgentRuntimeContextSection value={contextValue} resolved={resolvedContext} onChange={setAgentContext} contextPolicy={editable('native.context_policy')} /> : null}
+                {resolvedContext && editable('native.checkpoint') ? <AgentCheckpointSection value={contextValue} resolved={resolvedContext} sources={compactionSources} onChange={setAgentContext} /> : null}
+                {selectedCustomAgent && editable('shared.context_sources') ? <AgentContextBindingsSection value={customContextBindings} onChange={(context_bindings) => updateSelectedCustomAgent((agent) => ({ ...agent, context_bindings }))} /> : null}
+                {editable('native.context_policy') ? <AgentContextSection agent={selected.key} effective={effective} resolved={resolvedContext} /> : null}
+              </AgentConfigurationDisclosure>
+              {engineAgent && sections?.some((section) => section.state === 'inactive') ? <AgentConfigurationDisclosure
+                key={`inactive:${activeSelection}:${resolvedEngine.selected}`}
+                id="inactive-runtime"
+                icon={Brain}
+                title={t('agentRuntime.configuration.savedOtherRuntimes')}
+                summary={t('agentRuntime.configuration.switchToEdit')}
+              >
+                <fieldset disabled aria-label={t('agentRuntime.configuration.savedOtherRuntimes')} className="flex min-w-0 flex-col gap-5 opacity-70">
+                  {resolvedEngine.selected !== 'native' ? <p className="text-[11px] leading-relaxed text-[var(--nova-text-muted)]">{t('agentRuntime.nativeInactive')}</p> : null}
+                  {sections.some((section) => section.id === 'native.model' && section.state === 'inactive') ? <AgentModelSection value={modelValue} inherited={inheritedModel} profiles={profileOptions} onChange={() => undefined} /> : null}
+                  {sections.some((section) => section.id === 'native.permissions' && section.state === 'inactive') ? <AgentToolSection value={toolValue} rows={configuredToolRows} onChange={() => undefined} /> : null}
+                  {resolvedContext && sections.some((section) => section.id === 'native.context_policy' && section.state === 'inactive') ? <AgentRuntimeContextSection value={contextValue} resolved={resolvedContext} inputBudget={false} onChange={() => undefined} /> : null}
+                  {resolvedContext && sections.some((section) => section.id === 'native.checkpoint' && section.state === 'inactive') ? <AgentCheckpointSection value={contextValue} resolved={resolvedContext} sources={compactionSources} onChange={() => undefined} /> : null}
+                  {sections.some((section) => section.id === 'native.subagents' && section.state === 'inactive') ? selectedCustomAgent
+                    ? <AgentDelegationPolicySection value={customDelegation} runtimeKind={activeAgent} subAgents={effective.sub_agents ?? []} onChange={() => undefined} />
+                    : subAgentParent ? <AgentSubAgentSection agent={subAgentParent} toolRows={configuredToolRows} generalSettings={draft.general_sub_agents} effectiveGeneralSettings={effective.general_sub_agents} subAgents={draft.sub_agents ?? []} effectiveSubAgents={effective.sub_agents ?? []} profiles={profileOptions} onGeneralChange={() => undefined} onChange={() => undefined} /> : null : null}
+                  {resolvedEngine.codex && sections.some((section) => section.id === 'codex.model' && section.state === 'inactive') ? <dl className="grid grid-cols-2 gap-2">
+                    <dt>{t('agentRuntime.codex')} · {t('agentRuntime.model')}</dt><dd className="break-words">{resolvedEngine.codex.profile_id ?? resolvedEngine.codex.model}</dd>
+                    <dt>{t('agentRuntime.effort')}</dt><dd>{resolvedEngine.codex.effort ?? t('agentRuntime.defaultEffort')}</dd>
+                  </dl> : null}
+                  {resolvedEngine.claude && sections.some((section) => section.id === 'claude.model' && section.state === 'inactive') ? <dl className="grid grid-cols-2 gap-2">
+                    <dt>{t('agentRuntime.claude')} · {t('agentRuntime.model')}</dt><dd className="break-words">{resolvedEngine.claude.profile_id ?? resolvedEngine.claude.model}</dd>
+                    <dt>{t('agentRuntime.effort')}</dt><dd>{resolvedEngine.claude.effort ?? t('agentRuntime.defaultEffort')}</dd>
+                  </dl> : null}
+                </fieldset>
+              </AgentConfigurationDisclosure> : null}
+            </div>
+          </main>
+        )}
+      </ResourceWorkspace>
+      )}
+      <CreateCustomAgentDialog
+        open={createOpen}
+        initialRuntimeKind={createRuntimeKind}
+        onOpenChange={setCreateOpen}
+        onCreate={(agent) => {
+          if (!layered) return
+          const definition = cloneBuiltInAgent(agent, layered, effective)
+          setDraft((current) => ({ ...current, custom_agents: [...(current.custom_agents ?? []), definition] }))
+          setActiveSelection(`custom:${agent.id}`)
+        }}
+      />
+    </FeaturePageShell>
+  )
+}
+
+function activeSelectionIDIsCustom(selection: AgentSelectionID) {
+  return selection.startsWith('custom:')
+}
+
+function isSubAgentParent(agent: VisibleAgentKey): agent is SubAgentParentKey {
+  return agent === 'general' || agent === 'ide' || agent === 'interactive_story'
+}
+
+function isStandaloneModelAgent(agent: VisibleAgentKey): boolean {
+  return agent === 'image' || agent === 'version_summary' || agent === 'tool_agent'
+}

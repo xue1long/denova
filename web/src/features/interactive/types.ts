@@ -1,0 +1,1018 @@
+import type { SpeechContentSettings } from '@/features/speech/text'
+import type { SSEEvent } from '@/lib/api'
+import type { ChatAttachment } from '@/lib/api-client/types'
+
+export type InteractiveSubmode = 'story' | 'timeline'
+
+export type StoryPlanningMode = 'enabled' | 'disabled'
+export type StoryTitleSource = 'pending' | 'generated' | 'user'
+
+export interface StorySpeechSettings extends SpeechContentSettings {
+  auto_read: boolean
+}
+
+export interface StorySummary {
+  id: string
+  title: string
+  title_source?: StoryTitleSource
+  origin: string
+  protagonist: StoryProtagonist
+  story_teller_id: string
+  planning_template_id: string
+  planning_mode?: StoryPlanningMode
+  module_refs?: StoryDirectorModuleRefs
+  reply_target_chars: number
+  choice_count: number
+  speech_settings?: StorySpeechSettings
+  presentation_settings?: StoryPresentationSettings
+  image_settings?: StoryImageSettings
+  check_settings?: Partial<StoryCheckSettings>
+  opening: StoryOpeningConfig
+  state_schema_policy?: StoryStateSchemaPolicy
+  created_at: string
+  updated_at: string
+  branches: number
+  events: number
+  turn_count: number
+}
+
+export type StoryStateSchemaMode = 'adapt_template' | 'fixed_template' | 'generate'
+
+export interface StoryStateSchemaPolicy {
+  mode: StoryStateSchemaMode
+}
+
+type StoryImageMode = 'manual' | 'interval'
+
+export interface StoryImageSettings {
+  mode: StoryImageMode
+  interval_turns: number
+  preset_id?: string
+}
+
+type StoryOpeningMode = 'ai' | 'preset' | 'custom'
+
+export interface StoryOpeningConfig {
+  mode: StoryOpeningMode
+  preset_id?: string
+  preset_text?: string
+  custom_text?: string
+}
+
+export interface StoryIndex {
+  current_story_id: string
+  stories: StorySummary[]
+}
+
+export interface Teller {
+  version: number
+  id: string
+  name: string
+  description: string
+  style_refs?: string[] | null
+  style_rules?: StyleRule[] | null
+  context_policy: TellerContextPolicy
+  slots: TellerPromptSlot[]
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface ImagePreset {
+  version: number
+  id: string
+  name: string
+  description: string
+  prompt?: string
+  slots?: ImagePresetSlot[]
+  path?: string
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface GamePlanningSection {
+  id: string
+  title: string
+  description: string
+}
+
+export interface GamePlanningTemplate {
+  version: number
+  id: string
+  name: string
+  description: string
+  sections: GamePlanningSection[]
+  path?: string
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface StoryDirectorModuleRefs {
+  narrative_style_id?: string
+  narrative_style_disabled?: boolean
+  event_package_ids?: string[]
+  event_packages_disabled?: boolean
+  rule_system_id?: string
+  rule_system_disabled?: boolean
+  actor_state_id?: string
+  actor_state_disabled?: boolean
+  image_preset_id?: string
+  image_preset_disabled?: boolean
+}
+
+export interface EventPackageModule {
+  version: number
+  id: string
+  name: string
+  description: string
+  events?: TellerEventCard[]
+  path?: string
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface RuleSystemModule {
+  version: number
+  id: string
+  name: string
+  description: string
+  actor_state_id?: string
+  trpg_system: StoryDirectorTRPGSystem
+  path?: string
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface ActorStateModule {
+  version: number
+  id: string
+  name: string
+  description: string
+  actor_state: StoryDirectorActorStateSystem
+  path?: string
+  custom: boolean
+  builtin_overridden?: boolean
+  invalid?: boolean
+  error?: string
+  created_at?: string
+  updated_at?: string
+  revision?: string
+}
+
+export type StoryProtagonistMode = 'default' | 'custom' | 'lore'
+
+export interface StoryProtagonist {
+  mode: StoryProtagonistMode
+  name?: string
+  profile?: string
+  source_lore_item_id?: string
+  source_lore_updated_at?: string
+}
+
+export interface StoryCheckSettings {
+  difficulty_shift: number
+  roll_modifier: number
+  rule_state_consumption_mode?: 'hybrid_auto' | 'suggestions_only'
+  rule_visibility_mode?: 'audit_only' | 'public_roll'
+}
+
+export interface InteractiveStoryUpdateInput {
+  title?: string
+  origin?: string
+  protagonist?: StoryProtagonist
+  story_teller_id?: string
+  planning_template_id?: string
+  planning_mode?: StoryPlanningMode
+  module_refs?: StoryDirectorModuleRefs
+  reply_target_chars?: number
+  choice_count?: number
+  speech_settings?: StorySpeechSettings
+  presentation_settings?: StoryPresentationSettings
+  image_settings?: StoryImageSettings
+  check_settings?: StoryCheckSettings
+  opening?: StoryOpeningConfig
+  state_schema_policy?: StoryStateSchemaPolicy
+}
+
+export interface StoryDirectorTRPGSystem {
+  rule_templates?: RuleCheck[]
+}
+
+export interface StoryDirectorActorStateSystem {
+  templates?: ActorStateTemplate[]
+  initial_actors?: ActorStateInitialActor[]
+  trait_pools?: ActorTraitPool[]
+}
+
+export interface ActorStateTemplate {
+  id: string
+  name: string
+  description?: string
+  fields?: ActorStateField[]
+  trait_rules?: ActorTraitRule[]
+  /** Legacy Beta input retained for API compatibility; normalized schemas ignore it. */
+  display_groups?: string[]
+}
+
+export interface ActorTraitRule {
+  pool_id: string
+  draw_count: number
+}
+
+export interface ActorTraitPool {
+  id: string
+  name: string
+  description?: string
+  traits?: ActorTraitDefinition[]
+}
+
+export interface ActorTraitDefinition {
+  id: string
+  name: string
+  summary?: string
+  weight?: number
+}
+
+export interface ActorTraitInstance {
+  pool_id: string
+  pool_name?: string
+  trait_id: string
+  name: string
+  summary?: string
+  source_kind?: string
+  source_id?: string
+  source_turn_id?: string
+}
+
+export interface ActorTraitSelection {
+  pool_id: string
+  trait_ids?: string[]
+}
+
+export interface InitialActorTraitRoll {
+  actor_id: string
+  selections?: ActorTraitSelection[]
+  seed?: number
+}
+
+export interface ActorStateField {
+  id?: string
+  path?: string
+  name: string
+  type: 'number' | 'string' | 'bool' | 'enum' | 'object' | 'list' | string
+  default?: unknown
+  min?: number
+  max?: number
+  /** Numeric capacity Field ID in the same Actor/template; mutually exclusive with max. */
+  max_field?: string
+  options?: string[]
+  description?: string
+  update_instruction?: string
+  /** Legacy Beta input retained for API compatibility; field array order is the fallback. */
+  order?: number
+  /** Optional presentation hint: cluster fields under one named ledger section. */
+  group?: string
+  /** Optional presentation hint: pin the field renderer; falls back to heuristics when empty. */
+  display?: 'stat' | 'inline' | 'block' | 'list'
+}
+
+export interface ActorStateInitialActor {
+  id: string
+  name: string
+  template_id: string
+  role?: string
+  description?: string
+  state?: Record<string, unknown>
+}
+
+export interface ImagePresetSlot {
+  id: string
+  name: string
+  target: 'agent_system' | 'tool_request'
+  enabled: boolean
+  content: string
+}
+
+export interface StyleRule {
+  scene: string
+  style_refs?: string[]
+  style_contents?: string[]
+}
+
+export interface StyleReference {
+  name: string
+  description: string
+  path: string
+  display_path: string
+  size?: number
+  updated_at?: string
+  missing?: boolean
+  error?: string
+}
+
+export interface StyleReferenceFileDocument {
+  reference: StyleReference
+  content: string
+  revision: string
+}
+
+export interface TellerEventPackage {
+  id?: string
+  name?: string
+  enabled: boolean
+  events?: TellerEventCard[]
+}
+
+export interface TellerEventCard {
+  id?: string
+  type_name?: string
+  description_markdown?: string
+  enabled: boolean
+  category?: string
+  tags?: string[]
+  intensity?: string
+}
+
+interface TellerContextPolicy {
+  creator: string
+  lore: string
+  runtime_state: string
+}
+
+export interface TellerPromptSlot {
+  id: string
+  name: string
+  target: 'system' | 'turn_context'
+  enabled: boolean
+  content: string
+}
+
+export interface TurnEvent {
+  id: string
+  parent_id: string | null
+  branch_id: string
+  ts: string
+  user: string
+  attachments?: ChatAttachment[]
+  user_context_only?: boolean
+  narrative: string
+  thinking?: string
+  execution_cursor?: string
+  run_id?: string
+  agent_kind?: string
+  display_events?: TurnDisplayEvent[]
+  state_delta?: StateDelta
+  hot_state?: HotState
+  rule_resolution?: RuleResolution
+  turn_result?: TurnResult
+  terminal_outcome?: TerminalOutcome
+  state_status?: 'pending' | 'ready' | 'failed'
+  state_error?: string
+  versions?: TurnVersion[]
+  version_idx?: number
+}
+
+export interface UpdateTurnNarrativeResult {
+  turn: TurnEvent
+}
+
+export interface UpdateBranchPlanResult {
+  branch_plan: BranchPlan
+  context_revision: number
+}
+
+export interface StoryPresentationSettings {
+  /** Allow Agent background changes; manual choices and the current image remain available. */
+  background: boolean
+  /** Initial background before the first committed stage; never overrides a saved turn. */
+  default_background?: PresentationMaterial
+  characters: boolean
+}
+
+export interface PresentationMaterial {
+  item_id: string
+  asset_id: string
+  path: string
+  name: string
+  /** Original-image focal point; absent means center. Saved with this scene. */
+  focus?: { x: number; y: number }
+}
+
+export interface TurnPresentation {
+  background?: PresentationMaterial
+  characters?: PresentationMaterial[]
+}
+
+export interface TurnResult {
+  presentation?: TurnPresentation
+  state_updates: Array<{ op: 'replace' | 'delta' | 'create' | string; path: string; value: unknown }>
+  choices: string[]
+}
+
+export interface TurnDisplayEvent {
+  phase?: string
+  runtime_managed?: boolean
+  agent_cycle?: number
+  id?: string
+  role: 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'narrative' | 'context_compaction' | 'todo_updated'
+  content?: string
+  name?: string
+  args?: string
+  status?: 'running' | 'success' | 'error' | 'discarded'
+  result?: string
+  tool_presentation?: import('@/lib/api').ToolPresentation
+  created_at?: string
+  run_id?: string
+  agent_kind?: string
+  agent_name?: string
+  root_agent_name?: string
+  run_path?: string[]
+  subagent?: boolean
+  subagent_session_id?: string
+  subagent_type?: string
+  parent_call_id?: string
+}
+
+export interface TokenUsageEvent {
+  id?: string
+  type?: 'token_usage'
+  story_id?: string
+  branch_id?: string
+  created_at?: string
+  run_id?: string
+  agent_kind?: string
+  prompt_tokens?: number
+  cached_prompt_tokens?: number
+  uncached_prompt_tokens?: number
+  cache_hit_rate?: number
+  completion_tokens?: number
+  reasoning_tokens?: number
+  total_tokens?: number
+  model_calls?: number
+  generated_bytes?: number
+  usage_calls?: TokenUsageCall[]
+}
+
+interface TokenUsageCall {
+  index?: number
+  created_at?: string
+  finish_reason?: string
+  requested_tools?: string[]
+  after_tools?: string[]
+  prompt_tokens?: number
+  cached_prompt_tokens?: number
+  uncached_prompt_tokens?: number
+  cache_hit_rate?: number
+  completion_tokens?: number
+  reasoning_tokens?: number
+  total_tokens?: number
+}
+
+interface TurnVersion {
+  turn_id: string
+  ts: string
+  current?: boolean
+}
+
+interface StateDelta {
+	schema_version?: number
+  ops?: StateOp[]
+  actor_ops?: ActorStateOp[]
+}
+
+export interface ActorStateOp {
+  op: string
+  actor_id: string
+  field_id: string
+  value?: unknown
+  reason?: string
+  source_turn_id?: string
+  source_kind?: string
+  source_id?: string
+}
+
+export interface StateOp {
+  op: string
+  path: string
+  value?: unknown
+  reason?: string
+  source_turn_id?: string
+  source_kind?: string
+  source_id?: string
+}
+
+interface HotState {
+  choices: string[]
+}
+
+export interface BranchPlan {
+  markdown: string
+  updated_turn_id?: string
+  updated_at?: string
+  revision?: string
+}
+
+export interface RuleCheck {
+  id?: string
+  label?: string
+  dice?: '1d20' | string
+  modifier?: number
+  failure_policy?: 'fail_forward' | 'success_at_cost' | 'blocked' | 'hard_failure' | string
+  difficulty_guidance?: string
+  state_effect_guidance?: string
+  trigger?: string
+  must_check_examples?: string[]
+  skip_check_examples?: string[]
+  success_hint?: string
+  failure_hint?: string
+  state_bindings?: RuleStateBinding[]
+}
+
+export interface RuleStateBinding {
+  id?: string
+  label?: string
+  trigger?: string
+  actor_template_id?: string
+  target_template_id?: string
+  modifiers?: RuleStateBindingModifier[]
+  narrative_state_refs?: RuleNarrativeStateRef[]
+  outcome_state_changes?: RuleOutcomeStateChangeBinding[]
+}
+
+export interface RuleStateBindingModifier {
+  source?: 'actor' | 'target' | string
+  field_id?: string
+  value_path?: string[]
+  effect?: 'advantage' | 'resistance' | string
+  scale?: number
+  offset?: number
+  min?: number
+  max?: number
+  rounding?: 'none' | 'floor' | 'ceil' | 'nearest' | string
+  required?: boolean
+}
+
+export interface RuleNarrativeStateRef {
+  source?: 'actor' | 'target' | 'scene' | string
+  field_id?: string
+  usage?: 'check_decision' | 'difficulty' | 'outcome_design' | 'prose' | string
+  guidance?: string
+}
+
+export interface RuleOutcomeStateChangeBinding {
+  outcome?: 'critical_success' | 'success' | 'failure' | 'critical_failure' | string
+  state_changes?: RuleComputedStateChange[]
+}
+
+export interface RuleComputedStateChange {
+  source?: 'actor' | 'target' | string
+  field_id?: string
+  change_formula?: RuleStateChangeFormula
+  reason?: string
+}
+
+export interface RuleStateChangeFormula {
+  base?: number
+  terms?: RuleStateFormulaTerm[]
+  min?: number
+  max?: number
+  rounding?: 'none' | 'floor' | 'ceil' | 'nearest' | string
+}
+
+export interface RuleStateFormulaTerm {
+  source?: 'actor' | 'target' | string
+  field_id?: string
+  value_path?: string[]
+  scale?: number
+  offset?: number
+}
+
+export interface RuleResolution {
+  id?: string
+  request: TurnCheckRequest
+  result: RuleResult
+  state_consumption?: RuleStateConsumption
+  terminal_candidate?: TerminalCandidate
+  rule_constraints?: string[]
+  created_at?: string
+  seed?: number
+}
+
+interface TurnCheckRequest {
+  action: string
+  intent: string
+  challenge: string
+  cost: string
+  state: string
+  adjudication?: TurnCheckAdjudication
+  rule?: TurnCheckRule
+  bonuses?: TurnCheckBonus[]
+  difficulty: 'very_easy' | 'easy' | 'normal' | 'hard' | 'very_hard' | string
+  outcomes: TurnCheckOutcomes
+}
+
+interface TurnCheckRule {
+  template?: string
+  template_id?: string
+  label?: string
+  failure_policy?: string
+  roll_mode?: 'normal' | 'advantage' | 'disadvantage' | string
+  binding_id?: string
+  actor_id?: string
+  target_actor_id?: string
+}
+
+interface TurnCheckBonus {
+  kind?: string
+  actor_id?: string
+  field_id?: string
+  reason: string
+  value: number
+}
+
+interface TurnCheckOutcomes {
+  critical_success: TurnCheckOutcome
+  success: TurnCheckOutcome
+  failure: TurnCheckOutcome
+  critical_failure: TurnCheckOutcome
+}
+
+interface TurnCheckOutcome {
+  result: string
+  state_changes?: TurnStateChange[]
+}
+
+interface TurnStateChange {
+  actor_id: string
+  field_id: string
+  change: number
+  reason?: string
+}
+
+interface TurnCheckAdjudication {
+  reason?: string
+  stakes?: string
+  difficulty_reason?: string
+  roll_mode_reason?: string
+  state_refs?: Array<{ actor_id: string; field_id: string }>
+}
+
+interface RuleResult {
+  id?: string
+  label?: string
+  kind?: string
+  mode?: string
+  dice?: string
+  rolls?: number[]
+  roll_total?: number
+  modifier?: number
+  difficulty?: number
+  total?: number
+  outcome: string
+  seed?: number
+  constraints?: string[]
+  error?: string
+  roll_mode?: string
+  kept_roll?: number
+  bonus_total?: number
+  bonus_details?: TurnCheckBonus[]
+  base_target?: number
+  target?: number
+  requested_difficulty?: string
+  effective_difficulty?: string
+  difficulty_shift?: number
+  story_roll_modifier?: number
+  result?: string
+  state_changes?: TurnStateChange[]
+}
+
+interface RuleStateConsumption {
+  status: 'none' | 'disabled' | 'applied' | 'partial' | 'skipped' | string
+  mode?: 'hybrid_auto' | 'suggestions_only' | string
+  applied_ops?: StateOp[]
+  applied_actor_ops?: ActorStateOp[]
+  warnings?: RuleStateConsumptionWarning[]
+}
+
+interface RuleStateConsumptionWarning {
+  actor_id?: string
+  field_id?: string
+  reason: string
+}
+
+interface TerminalCandidate {
+  type?: string
+  reason?: string
+  check_id?: string
+}
+
+export interface TerminalOutcome {
+  terminal: boolean
+  type?: string
+  reason?: string
+  final_narrative_summary?: string
+  caused_by_turn_id?: string
+  rule_resolution_id?: string
+  restart_suggestions?: string[]
+}
+
+export interface ActorTraitRollRequest {
+  actor_state_id?: string
+  actor_id: string
+  template_id: string
+  selections?: ActorTraitSelection[]
+  seed?: number
+}
+
+export interface ActorTraitRollResult {
+  actor_state_id?: string
+  actor_id: string
+  template_id: string
+  seed: number
+  traits: ActorTraitInstance[]
+}
+
+export interface RuleResolutionRerollInput {
+  branch_id?: string
+  turn_id?: string
+}
+
+export interface Snapshot {
+  pending_display_events?: TurnDisplayEvent[]
+  story_id: string
+  branch_id: string
+  context_revision?: number
+  turns: TurnEvent[]
+  pending_player_inputs?: PlayerInputAcceptedEvent[]
+  pending_model_context_batches?: ModelContextBatchEvent[]
+  current_turn?: TurnEvent
+  token_usage_events?: TokenUsageEvent[]
+  context_compaction?: ContextCompactionProjection | null
+  branch_plan?: BranchPlan
+  state: Record<string, unknown>
+  actor_state_schema?: ActorStateSchemaSnapshot
+	state_schema_initialization?: StateSchemaInitializationStatus
+  graph?: StoryGraph
+  turn_count?: number
+  turn_start?: number
+  history_before_cursor?: string
+  has_earlier_turns?: boolean
+}
+
+// InteractiveSnapshotResponse mirrors internal/interactive.Snapshot exactly.
+// Keep this wire DTO separate from Snapshot because the UI also merges SSE
+// deltas into its local projection.
+export interface InteractiveSnapshotResponse {
+  pending_display_events?: TurnDisplayEvent[]
+  story_id: string
+  branch_id: string
+  context_revision?: number
+  turns: TurnEvent[]
+  pending_player_inputs?: PlayerInputAcceptedEvent[]
+  pending_model_context_batches?: ModelContextBatchEvent[]
+  current_turn?: TurnEvent
+  token_usage_events?: TokenUsageEvent[]
+  context_compaction?: ContextCompactionProjection
+  branch_plan?: BranchPlan
+  state: Record<string, unknown>
+  actor_state_schema?: ActorStateSchemaSnapshot
+  state_schema_initialization?: StateSchemaInitializationStatus
+  graph: StoryGraph
+  turn_count: number
+  turn_start: number
+  history_before_cursor?: string
+  has_earlier_turns: boolean
+}
+
+export interface PlayerInputAcceptedEvent {
+  v: number
+  type: string
+  id: string
+  parent_id?: string
+  branch_id: string
+  ts: string
+  text: string
+  attachments?: ChatAttachment[]
+  context_only?: boolean
+  accepted_turn_count: number
+  agent_command_id: string
+  agent_operation_id: string
+  agent_cycle: number
+  agent_commit_hash: string
+  agent_canonical_hash?: string
+}
+
+export interface ModelContextBatchEvent {
+  v: number
+  type: string
+  id: string
+  parent_id?: string
+  branch_id: string
+  ts: string
+  player_input_id: string
+  agent_command_id: string
+  agent_operation_id: string
+  agent_cycle: number
+  sequence: number
+  messages: ModelContextMessage[]
+}
+
+export interface ModelContextMessage {
+  role: string
+  content?: string
+  name?: string
+  tool_calls?: ModelContextToolCall[]
+  tool_call_id?: string
+  tool_name?: string
+  tool_result?: ToolResultSummary
+}
+
+export interface ModelContextToolCall {
+  index?: number
+  id: string
+  type: string
+  function: ModelContextFunctionCall
+  extra?: Record<string, unknown>
+}
+
+export interface ModelContextFunctionCall {
+  name?: string
+  arguments?: string
+}
+
+export interface ToolResultSummary {
+  status: string
+  synthetic_reason?: string
+  model_truncated?: boolean
+  display_truncated?: boolean
+  result_retention: string
+  context_hints?: unknown
+  artifact_persistence?: unknown
+  protected_receipt?: unknown
+  artifacts?: unknown[]
+}
+
+export interface StoryHistoryPage {
+  story_id: string
+  branch_id: string
+  turns: TurnEvent[]
+  before_cursor?: string
+  has_more: boolean
+}
+
+export interface ActorStateSchemaSnapshot {
+  version: number
+	revision: number
+  system: StoryDirectorActorStateSystem
+	trpg_system?: StoryDirectorTRPGSystem
+	adaptation?: ActorStateSchemaAdaptationRecord
+  legacy_field_paths?: Record<string, Record<string, string>>
+  legacy_actor_templates?: Record<string, string>
+}
+
+export interface ActorStateSchemaAdaptationRecord {
+	source: string
+	summary?: string
+	source_turn_id?: string
+	lore_revision?: string
+	template_ops?: number
+	field_ops?: number
+	initial_actor_ops?: number
+	actor_ops?: number
+	reviewed_lore_ids?: string[]
+	requirements?: ActorStateSchemaRequirementReview[]
+	changes?: ActorStateSchemaAdaptationChange[]
+	warnings?: string[]
+}
+
+export interface ActorStateSchemaRequirementSource {
+	kind: 'lore' | 'opening' | 'turn_result' | 'trpg' | string
+	id: string
+}
+
+export interface ActorStateSchemaRequirementReview {
+	source: ActorStateSchemaRequirementSource
+	requirement: string
+	value_policy?: 'schema_only' | 'preserve' | 'initialize' | 'defer' | string
+	actor_id?: string
+	expected_type?: string
+	min?: number
+	max?: number
+	decision: 'covered' | 'add' | 'replace' | 'remove' | 'ignored' | string
+	template_id?: string
+	field_id?: string
+	reason?: string
+}
+
+export interface ActorStateSchemaAdaptationChange {
+	kind: 'template' | 'field' | 'actor' | 'actor_field' | string
+	op: 'add' | 'replace' | 'remove' | 'set' | string
+	template_id?: string
+	field_id?: string
+	target_id?: string
+	actor_id?: string
+	reason?: string
+	value_source?: {
+		source_id: string
+		item_id: string
+		source: ActorStateSchemaRequirementSource
+	}
+}
+
+export interface StateSchemaInitializationStatus {
+  mode: StoryStateSchemaMode
+  status: 'waiting_opening' | 'ready'
+  outcome?: 'changed' | 'unchanged' | 'fixed'
+  source_turn_id?: string
+  base_revision?: number
+  target_revision?: number
+  summary?: string
+  lore_revision?: string
+  reviewed_lore_ids?: string[]
+  requirements?: ActorStateSchemaRequirementReview[]
+  changes?: ActorStateSchemaAdaptationChange[]
+  warnings?: string[]
+  started_at?: string
+  completed_at?: string
+  updated_at?: string
+}
+
+// Read-only projection of the public Agent checkpoint bound to this branch.
+// Story persistence never owns or mutates this state.
+export interface ContextCompactionProjection {
+  id: string
+  branch_id: string
+  revision: number
+  summary: string
+  tokens_before: number
+  tokens_after: number
+  source_message_count: number
+}
+
+export interface BranchSummary {
+  id: string
+  head: string
+  from?: string
+  from_event?: string
+  title?: string
+  created_at: string
+  current: boolean
+}
+
+export interface PlotNode {
+  id: string
+  parent_id?: string
+  branch_id: string
+  title: string
+  summary: string
+  ts: string
+  current: boolean
+  head: boolean
+  terminal?: boolean
+  terminal_type?: string
+}
+
+export interface StoryGraph {
+  nodes: PlotNode[]
+  branches: BranchSummary[]
+}
+
+export interface InteractiveTurnPersistedEvent {
+  /** Transport replay restores history without automatic playback. */
+  replayed?: boolean
+  story_id: string
+  branch_id: string
+  turn_count: number
+  turn: TurnEvent
+  branch_plan?: BranchPlan
+  state: Record<string, unknown>
+  graph: StoryGraph
+  branches: BranchSummary[]
+  context_compaction: ContextCompactionProjection | null
+}
+
+export type InteractiveSSEEvent = SSEEvent

@@ -1,0 +1,801 @@
+package interactiveapp
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+
+	"denova/config"
+	"denova/internal/agents"
+	agentcontext "denova/internal/agents/context"
+	"denova/internal/agents/prompts"
+	agentrun "denova/internal/agents/run"
+	"denova/internal/agents/session"
+	novaskills "denova/internal/agents/skills"
+	"denova/internal/book/lore"
+	"denova/internal/i18n"
+	"denova/internal/interactive"
+
+	agentcompaction "github.com/alfredxw/denova/agent/context/compaction"
+	agentschema "github.com/alfredxw/denova/agent/schema"
+	agentcanonical "github.com/alfredxw/denova/agent/session/canonical"
+)
+
+type Conversation struct {
+	store                       *interactive.Store
+	novaDir                     string
+	workspace                   string
+	cfg                         *config.Config
+	storyID                     string
+	branchID                    string
+	user                        string
+	inputVisibility             agentrun.InputVisibility
+	replyTargetChars            int
+	cycleStoryConfig            *interactive.StoryMeta
+	modelContextAppendMu        sync.Mutex
+	turnCheckMu                 sync.Mutex
+	mu                          sync.Mutex
+	lastTurn                    *interactive.TurnEvent
+	lastStateReady              bool
+	lastSources                 string
+	lastContextSources          []interactiveContextSource
+	lastContextLedgerParts      []agentcontext.AuditPart
+	stableLeadingMessage        string
+	assistantMetadata           session.MessageMetadata
+	displayEvents               []interactive.DisplayEvent
+	modelContextMessages        []interactive.ModelContextMessage
+	modelContextBatchSequence   int
+	ruleResolution              *interactive.RuleResolution
+	turnDraft                   interactive.TurnDraft
+	turnDraftLoaded             bool
+	turnProtocol                interactiveTurnProtocol
+	baseParentID                *string
+	replaceTurnID               string
+	pinParentAtExecution        bool
+	agentCycleCommit            func(context.Context, agentrun.Outcome) error
+	agentCycleIdentity          agentrun.CycleIdentity
+	acceptedPlayerInputID       string
+	pendingDomainCommit         *interactive.DomainCommitIntent
+	lastDomainReceipt           *interactive.DomainCommitReceipt
+	agentCompaction             *agentcompaction.CompactionState
+	modelHistoryKey             string
+	modelHistory                *interactive.StoryModelHistory
+	openingStateSchemaDraft     *interactive.ActorStateSchemaBatchDraft
+	openingStateSchemaAudit     interactive.ActorStateSchemaBatchAudit
+	requireProtagonistSelection bool
+
+	// draftCommit is supplied by a product execution host before admission.
+	// Native uses its atomic checkpoint callback; external turns commit only
+	// product-owned Story facts and never enter the Native lifecycle.
+	draftCommit func(context.Context, interactive.TurnDraft, *agentschema.ToolResult) error
+}
+
+var _ novaskills.ExplicitResolver = (*Conversation)(nil)
+
+func (c *Conversation) ModelContextBudget() agentcontext.Budget {
+	if c == nil {
+		return agentcontext.DefaultBudget()
+	}
+	return agentcontext.ContextBudgetForAgent(c.cfg, config.AgentKindInteractiveStory)
+}
+
+func (c *Conversation) ResolveExplicitSkills(ctx context.Context, message string) ([]novaskills.Invocation, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	cfg := c.cfg
+	c.mu.Unlock()
+	return novaskills.ResolveConfiguredInvocations(ctx, cfg, config.AgentKindInteractiveStory, message)
+}
+
+// BindAgentCycleIdentity receives the coordinator-selected identity before
+// the model cycle starts. The turn store persists it with the canonical game
+// event, providing an idempotency key across the domain/runtime commit seam.
+func (c *Conversation) BindAgentCycleIdentity(identity agentrun.CycleIdentity) {
+	if c == nil {
+		return
+	}
+	c.modelContextAppendMu.Lock()
+	defer c.modelContextAppendMu.Unlock()
+	c.mu.Lock()
+	sameCycle := c.agentCycleIdentity == identity
+	c.agentCycleIdentity = identity
+	if !sameCycle {
+		c.acceptedPlayerInputID = ""
+		c.turnDraftLoaded = false
+		c.turnDraft = interactive.TurnDraft{}
+		c.turnProtocol = interactiveTurnProtocol{}
+		c.ruleResolution = nil
+	}
+	c.modelContextMessages = nil
+	c.modelContextBatchSequence = 0
+	c.pendingDomainCommit = nil
+	c.lastDomainReceipt = nil
+	c.mu.Unlock()
+}
+
+func (c *Conversation) AgentCycleIdentitySnapshot() agentrun.CycleIdentity {
+	if c == nil {
+		return agentrun.CycleIdentity{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.agentCycleIdentity
+}
+
+func (c *Conversation) WithAgentCycleCommit(commit func(context.Context, agentrun.Outcome) error) *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.agentCycleCommit = commit
+		c.mu.Unlock()
+	}
+	return c
+}
+
+// CommitAgentCycle implements agentrun.CycleCommitter. The callback is
+// immutable once execution begins and bridges the generic durable cycle
+// boundary to the game domain's persisted-turn projection.
+func (c *Conversation) CommitAgentCycle(ctx context.Context, outcome agentrun.Outcome) error {
+	return c.CommitAgentCycleStage(ctx, agentrun.DomainCommitOutput, outcome)
+}
+
+func (c *Conversation) PendingAgentCycleCommit(stage agentrun.DomainCommitStage) (agentrun.DomainCommitIntent, bool, error) {
+	if c == nil {
+		return agentrun.DomainCommitIntent{}, false, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if stage != agentrun.DomainCommitOutput || c.pendingDomainCommit == nil {
+		return agentrun.DomainCommitIntent{}, false, nil
+	}
+	return agentrun.DomainCommitIntent{
+		Identity: c.agentCycleIdentity, Stage: stage, Hash: c.pendingDomainCommit.Hash,
+	}, true, nil
+}
+
+func (c *Conversation) CommitAgentCycleStage(ctx context.Context, stage agentrun.DomainCommitStage, outcome agentrun.Outcome) error {
+	if c == nil || stage != agentrun.DomainCommitOutput {
+		return nil
+	}
+	c.mu.Lock()
+	pending := c.pendingDomainCommit
+	commit := c.agentCycleCommit
+	if outcome.Status != agentrun.OutcomeCompleted && outcome.Status != agentrun.OutcomePreempted {
+		c.pendingDomainCommit = nil
+		c.lastDomainReceipt = nil
+		c.mu.Unlock()
+		if commit != nil {
+			return commit(ctx, outcome)
+		}
+		return nil
+	}
+	c.mu.Unlock()
+	if pending == nil {
+		if commit != nil {
+			return commit(ctx, outcome)
+		}
+		return nil
+	}
+	receipt, err := c.store.CommitDomainTurn(c.storyID, *pending)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.pendingDomainCommit = nil
+	c.lastDomainReceipt = &receipt
+	turn := receipt.Turn
+	c.lastTurn = &turn
+	c.lastStateReady = turn.StateStatus == "ready"
+	c.turnProtocol.markCommitted()
+	c.mu.Unlock()
+	if commit != nil {
+		return commit(ctx, outcome)
+	}
+	return nil
+}
+
+func (c *Conversation) LastAgentCycleCommitReceipt(stage agentrun.DomainCommitStage) (agentrun.DomainCommitReceipt, bool) {
+	if c == nil || stage != agentrun.DomainCommitOutput {
+		return agentrun.DomainCommitReceipt{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastDomainReceipt == nil {
+		return agentrun.DomainCommitReceipt{}, false
+	}
+	return agentrun.DomainCommitReceipt{
+		Identity: c.agentCycleIdentity, Stage: stage,
+		Hash: c.lastDomainReceipt.Hash, Revision: c.lastDomainReceipt.Revision,
+	}, true
+}
+
+func NewConversation(store *interactive.Store, novaDir, workspace, storyID, branchID, user string, replyTargetChars int, cfg *config.Config) *Conversation {
+	return &Conversation{store: store, novaDir: novaDir, workspace: workspace, cfg: cfg, storyID: storyID, branchID: branchID, user: user, replyTargetChars: replyTargetChars}
+}
+
+// WithCycleStoryConfig freezes mutable story tuning for this model cycle.
+// Branch metadata and committed story state remain live so queued execution
+// can still pin the actual parent immediately before context assembly.
+func (c *Conversation) WithCycleStoryConfig(meta interactive.StoryMeta) *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.cycleStoryConfig = &meta
+		c.mu.Unlock()
+	}
+	return c
+}
+
+// WithInputVisibility binds the accepted input's player-facing projection.
+// Both visible and model-only inputs remain canonical game model context.
+func (c *Conversation) WithInputVisibility(visibility agentrun.InputVisibility) *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.inputVisibility = visibility
+		c.mu.Unlock()
+	}
+	return c
+}
+
+// WithRequiredProtagonistSelection guards only an unresolved autonomous
+// opening. Ordinary legacy/default stories retain their existing turn flow.
+func (c *Conversation) WithRequiredProtagonistSelection(required bool) *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.requireProtagonistSelection = required
+		c.mu.Unlock()
+	}
+	return c
+}
+
+func (c *Conversation) WithBaseParentID(parentID string) *Conversation {
+	if c != nil {
+		parentID = strings.TrimSpace(parentID)
+		c.mu.Lock()
+		c.baseParentID = &parentID
+		c.mu.Unlock()
+	}
+	return c
+}
+
+func (c *Conversation) WithRegenerateTarget(turnID string) *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.replaceTurnID = strings.TrimSpace(turnID)
+		c.mu.Unlock()
+	}
+	return c
+}
+
+func (c *Conversation) regenerateTargetSnapshot() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.replaceTurnID
+}
+
+func (c *Conversation) storyContextForCycle() (interactive.StoryContext, error) {
+	if c == nil || c.store == nil {
+		return interactive.StoryContext{}, fmt.Errorf("互动故事不存在")
+	}
+	var (
+		storyCtx interactive.StoryContext
+		err      error
+	)
+	if target := c.regenerateTargetSnapshot(); target != "" {
+		storyCtx, err = c.store.StoryContextAtTurnParent(c.storyID, c.branchID, target)
+	} else {
+		storyCtx, err = c.store.StoryContext(c.storyID, c.branchID)
+	}
+	if err != nil {
+		return interactive.StoryContext{}, err
+	}
+	c.mu.Lock()
+	cycleConfig := c.cycleStoryConfig
+	c.mu.Unlock()
+	if cycleConfig != nil {
+		applyCycleStoryConfig(&storyCtx.Meta, *cycleConfig)
+	}
+	return storyCtx, nil
+}
+
+func applyCycleStoryConfig(target *interactive.StoryMeta, source interactive.StoryMeta) {
+	if target == nil {
+		return
+	}
+	target.Title = source.Title
+	target.TitleSource = source.TitleSource
+	target.Origin = source.Origin
+	target.StoryTellerID = source.StoryTellerID
+	target.PlanningTemplateID = source.PlanningTemplateID
+	target.StoryDirectorID = source.StoryDirectorID
+	target.PlanningMode = source.PlanningMode
+	target.ModuleRefs = source.ModuleRefs
+	target.ReplyTargetChars = source.ReplyTargetChars
+	target.ChoiceCount = source.ChoiceCount
+	target.Opening = source.Opening
+	target.ImageSettings = source.ImageSettings
+	target.PresentationSettings = interactive.NormalizeStoryPresentationSettings(source.PresentationSettings)
+	target.CheckSettings = source.CheckSettings
+}
+
+func (c *Conversation) WithExecutionParentPinning() *Conversation {
+	if c != nil {
+		c.mu.Lock()
+		c.pinParentAtExecution = true
+		c.mu.Unlock()
+	}
+	return c
+}
+
+func (c *Conversation) WithOpeningStateSchema(storyCtx interactive.StoryContext) *Conversation {
+	if c == nil || !interactive.StoryStateSchemaPolicyUsesOpeningGameAgent(storyCtx.Meta.StateSchemaPolicy) || storyCtx.Meta.StateSchemaInitialization == nil || storyCtx.Meta.StateSchemaInitialization.Status != interactive.StateSchemaInitializationWaitingOpening || storyCtx.Meta.ActorStateSchema == nil || SnapshotTurnCount(storyCtx.Snapshot) > 0 {
+		return c
+	}
+	trpgSourceIDs := make([]string, 0, len(storyCtx.Meta.ActorStateSchema.TRPGSystem.RuleTemplates))
+	for _, rule := range storyCtx.Meta.ActorStateSchema.TRPGSystem.RuleTemplates {
+		if id := strings.TrimSpace(rule.ID); id != "" {
+			trpgSourceIDs = append(trpgSourceIDs, id)
+		}
+	}
+	c.mu.Lock()
+	c.openingStateSchemaDraft = interactive.NewOpeningActorStateSchemaBatchDraft(storyCtx.Meta.ActorStateSchema.System, storyCtx.Meta.ActorStateSchema.TRPGSystem)
+	c.openingStateSchemaAudit = interactive.ActorStateSchemaBatchAudit{
+		OpeningSourceIDs: []string{"opening-draft"},
+		TRPGSourceIDs:    trpgSourceIDs,
+		CurrentState:     storyCtx.Snapshot.State,
+	}
+	c.mu.Unlock()
+	slog.InfoContext(context.Background(), fmt.Sprintf("[interactive-agent] enabled opening state schema draft story_id=%s branch_id=%s mode=%s base_revision=%d", c.storyID, storyCtx.Snapshot.BranchID, storyCtx.Meta.StateSchemaPolicy.Mode, storyCtx.Meta.ActorStateSchema.Revision))
+	return c
+}
+
+func (c *Conversation) refreshOpeningStateSchema(storyCtx interactive.StoryContext) {
+	if c == nil || (interactive.StoryStateSchemaPolicyUsesOpeningGameAgent(storyCtx.Meta.StateSchemaPolicy) &&
+		storyCtx.Meta.StateSchemaInitialization != nil &&
+		storyCtx.Meta.StateSchemaInitialization.Status == interactive.StateSchemaInitializationWaitingOpening &&
+		SnapshotTurnCount(storyCtx.Snapshot) == 0) {
+		return
+	}
+	c.mu.Lock()
+	hadDraft := c.openingStateSchemaDraft != nil
+	c.openingStateSchemaDraft = nil
+	c.openingStateSchemaAudit = interactive.ActorStateSchemaBatchAudit{}
+	c.mu.Unlock()
+	if hadDraft {
+		slog.InfoContext(context.Background(), fmt.Sprintf("[interactive-agent] cleared stale opening state schema draft story_id=%s branch_id=%s turns=%d", c.storyID, storyCtx.Snapshot.BranchID, len(storyCtx.Snapshot.Turns)))
+	}
+}
+
+func (c *Conversation) SubmitOpeningStateSchemaBatch(ctx context.Context, batch interactive.ActorStateSchemaBatch) (interactive.ActorStateSchemaBatchResult, error) {
+	if c == nil {
+		return interactive.ActorStateSchemaBatchResult{}, fmt.Errorf("互动故事不存在")
+	}
+	select {
+	case <-ctx.Done():
+		return interactive.ActorStateSchemaBatchResult{}, ctx.Err()
+	default:
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.openingStateSchemaDraft == nil {
+		return interactive.ActorStateSchemaBatchResult{}, fmt.Errorf("当前故事不需要 Game Agent 初始化状态结构")
+	}
+	result := c.openingStateSchemaDraft.SubmitStructureOnly(batch, c.openingStateSchemaAudit)
+	slog.InfoContext(ctx, fmt.Sprintf("[interactive-agent] staged opening state schema story_id=%s branch_id=%s accepted=%d rejected=%d blocked=%d finalized=%t draft_items=%d", c.storyID, c.branchID, len(result.Accepted), len(result.Rejected), len(result.Blocked), result.Finalized, result.DraftAcceptedItems))
+	return result, nil
+}
+
+func (c *Conversation) openingStateSchemaProposalSnapshot() *interactive.ActorStateSchemaProposal {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	proposal, ok := c.openingStateSchemaDraft.FinalProposal()
+	if !ok {
+		return nil
+	}
+	return &proposal
+}
+
+func (c *Conversation) effectiveTurnState(storyCtx interactive.StoryContext) (interactive.StoryDirectorActorStateSystem, map[string]any, error) {
+	actorState := interactive.StoryDirectorActorStateSystem{}
+	if storyCtx.Meta.ActorStateSchema != nil {
+		actorState = storyCtx.Meta.ActorStateSchema.System
+	} else {
+		actorState = c.StoryRuntimeForMeta(storyCtx.Meta).ActorState
+	}
+	state := storyCtx.Snapshot.State
+	c.mu.Lock()
+	proposal, hasProposal := c.openingStateSchemaDraft.FinalProposal()
+	draftRequired := c.openingStateSchemaDraft != nil
+	c.mu.Unlock()
+	if draftRequired && !hasProposal {
+		return interactive.StoryDirectorActorStateSystem{}, nil, fmt.Errorf("请先调用 initialize_story_state_schema 并完成 finalize，再提交开局状态")
+	}
+	if hasProposal {
+		if storyCtx.Meta.ActorStateSchema == nil {
+			return interactive.StoryDirectorActorStateSystem{}, nil, fmt.Errorf("故事缺少开局状态结构基线")
+		}
+		target, _, err := interactive.ApplyActorStateSchemaAdaptation(storyCtx.Meta.ActorStateSchema.System, storyCtx.Meta.ActorStateSchema.TRPGSystem, proposal.Adaptation)
+		if err != nil {
+			return interactive.StoryDirectorActorStateSystem{}, nil, err
+		}
+		initialState, err := interactive.BuildActorStateInitialSnapshot(target, storyCtx.Meta.InitialTraitRolls)
+		if err != nil {
+			return interactive.StoryDirectorActorStateSystem{}, nil, err
+		}
+		return target, initialState, nil
+	}
+	if interactive.StoryStateSchemaPolicyUsesOpeningGameAgent(storyCtx.Meta.StateSchemaPolicy) {
+		rawActors, _ := state["actors"].(map[string]any)
+		if len(rawActors) == 0 {
+			initialState, err := interactive.BuildActorStateInitialSnapshot(actorState, storyCtx.Meta.InitialTraitRolls)
+			if err != nil {
+				return interactive.StoryDirectorActorStateSystem{}, nil, err
+			}
+			state = initialState
+		}
+	}
+	return actorState, state, nil
+}
+
+type interactiveModelContextCommitState struct {
+	storyContext         interactive.StoryContext
+	baseParentID         *string
+	sourceSummary        string
+	contextSources       []interactiveContextSource
+	contextLedgerParts   []agentcontext.AuditPart
+	stableLeadingMessage string
+}
+
+// StableLeadingMessage returns the stable prefix captured by AssembleModelContext.
+// Callers use it only when validating a manually prepared compaction candidate.
+func StableLeadingMessage(commitState any) (string, bool) {
+	state, ok := commitState.(interactiveModelContextCommitState)
+	if !ok {
+		return "", false
+	}
+	return state.stableLeadingMessage, true
+}
+
+func (c *Conversation) AssembleModelContext(ctx context.Context, originalMessage string, input agentcontext.ModelContextInput) (agentcontext.ModelContextResult, error) {
+	_ = originalMessage
+	if c == nil || c.store == nil {
+		return agentcontext.ModelContextResult{}, fmt.Errorf("互动故事不存在")
+	}
+	if err := ctx.Err(); err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	storyCtx, err := c.storyContextForCycle()
+	if err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	branch, ok := storyCtx.Meta.Branches[storyCtx.Snapshot.BranchID]
+	if !ok {
+		return agentcontext.ModelContextResult{}, fmt.Errorf("互动故事分支元数据不存在: %s", storyCtx.Snapshot.BranchID)
+	}
+	// Commands may wait behind an active cycle. Pin the compare-and-swap parent
+	// at actual model-context assembly time, not HTTP acceptance time, so a
+	// queued FollowUp sees the turn committed by the preceding cycle while still
+	// rejecting unrelated branch writes that race the model run.
+	c.mu.Lock()
+	pinParent := c.pinParentAtExecution
+	c.mu.Unlock()
+	var baseParentID *string
+	if pinParent && c.regenerateTargetSnapshot() == "" {
+		parent := strings.TrimSpace(branch.Head)
+		baseParentID = &parent
+	}
+	teller := c.teller(storyCtx.Meta.StoryTellerID)
+	storyDirector := storyDirectorForSnapshot(c.StoryRuntimeForMeta(storyCtx.Meta), storyCtx.Meta.ActorStateSchema)
+	tellerTurnContextPrompt := teller.PromptForTargets("turn_context")
+	modelHistory, activeCompaction, err := c.modelHistoryForCycle(storyCtx)
+	if err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	turnHistory := interactiveTurnHistory{Turns: append([]interactive.StoryModelTurn(nil), modelHistory.Turns...)}
+	checkpointSummary := ""
+	if activeCompaction != nil {
+		checkpointSummary = strings.TrimSpace(activeCompaction.Summary)
+	}
+	branchPlan := ""
+	var activeBranchPlan *interactive.BranchPlan
+	if storyCtx.Meta.PlanningMode == interactive.StoryPlanningModeEnabled && storyCtx.Snapshot.BranchPlan != nil {
+		activeBranchPlan = storyCtx.Snapshot.BranchPlan
+		branchPlan = storyCtx.Snapshot.BranchPlan.Markdown
+	}
+	loreRuntime, err := buildInteractiveStoryLoreContext(c.workspace, activeBranchPlan, input.UserMessage)
+	if err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	loreStore := lore.NewStore(c.workspace)
+	residentLore, err := loreStore.ProgressiveContextMarkdown()
+	if err != nil {
+		return agentcontext.ModelContextResult{}, fmt.Errorf("读取常驻资料失败: %w", err)
+	}
+	if len([]byte(residentLore)) > interactiveResidentLoreMessageMaxBytes {
+		return agentcontext.ModelContextResult{}, fmt.Errorf("常驻资料模型上下文过大: %d > %d bytes", len([]byte(residentLore)), interactiveResidentLoreMessageMaxBytes)
+	}
+	loreRevision, err := loreStore.Revision()
+	if err != nil {
+		return agentcontext.ModelContextResult{}, fmt.Errorf("读取资料库 revision 失败: %w", err)
+	}
+	ruleSummary := interactive.StoryRuleSummary(storyDirector, StoryRuntimeContextMaxBytes)
+	actorStateRuntime := interactive.ActorStateRuntimeContext(storyDirector.ActorState, storyCtx.Snapshot.State, storyCtx.Meta.ChoiceCount)
+	stateSchemaInitialization := interactive.OpeningGameStateSchemaInstruction(storyCtx.Meta)
+	runtimeContext := prompts.InteractiveStoryRuntimeContext(prompts.InteractiveStoryPromptInput{
+		Title:                     storyCtx.Meta.Title,
+		Origin:                    storyCtx.Meta.Origin,
+		StoryTellerID:             storyCtx.Meta.StoryTellerID,
+		BranchID:                  storyCtx.Snapshot.BranchID,
+		ReplyTargetChars:          c.replyTargetChars,
+		ChoiceCount:               storyCtx.Meta.ChoiceCount,
+		BranchPlan:                branchPlan,
+		PlanningEnabled:           storyCtx.Meta.PlanningMode == interactive.StoryPlanningModeEnabled,
+		RuleChecksEnabled:         !storyDirector.ModuleRefs.RuleSystemDisabled && len(storyDirector.TRPGSystem.RuleTemplates) > 0,
+		StoryRuleCatalog:          ruleSummary,
+		ActorState:                actorStateRuntime,
+		StateSchemaInitialization: stateSchemaInitialization,
+		LoreContext:               loreRuntime,
+	})
+	cycleIdentity := c.AgentCycleIdentitySnapshot()
+	modelProjection, err := BuildModelContextProjection(
+		modelHistory, activeCompaction, storyCtx.Snapshot, c.ToolResultContextPolicy(), cycleIdentity,
+	)
+	if err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	history := modelProjection.Messages
+	pendingInputMessages := modelProjection.PendingInputMessages
+	fragments := append([]agentcontext.Fragment(nil), input.Fragments...)
+	protagonistContext := interactive.StoryProtagonistContext(storyCtx.Meta.Protagonist)
+	if strings.TrimSpace(protagonistContext) != "" {
+		fragments = append(fragments, agentcontext.Fragment{
+			ID: "interactive_story_protagonist", Source: "story.protagonist", Title: "Story Protagonist Profile",
+			Purpose: "provide the immutable story-owned protagonist identity and backstory",
+			Content: protagonistContext, Placement: agentcontext.PlacementLeadingMessage, Limit: StoryRuntimeContextMaxBytes, Included: true,
+			Stability: agentschema.ContextStablePrefix,
+			Note:      "source=StoryMeta.protagonist; lifecycle=immutable after first turn; actor_id=protagonist",
+		})
+	}
+	if strings.TrimSpace(residentLore) != "" {
+		fragments = append(fragments, agentcontext.Fragment{
+			ID: "interactive_resident_lore", Source: "interactive.resident_lore", Title: "Lore Index",
+			Purpose: "provide the Markdown lore guide, always-loaded settings and discovery entries",
+			Content: residentLore, Placement: agentcontext.PlacementLeadingMessage, Limit: interactiveResidentLoreMessageMaxBytes, Included: true,
+			Stability: agentschema.ContextStablePrefix,
+			Note:      "source=setting/lore/items.json index guide and enabled items; lifecycle=replaceable stable prefix; revision=" + strings.TrimSpace(loreRevision),
+		})
+	}
+	if strings.TrimSpace(tellerTurnContextPrompt) != "" {
+		fragments = append(fragments, agentcontext.Fragment{
+			ID: "interactive_turn_rules", Source: "interactive.turn_rules", Title: "Storyteller Rules for This Turn",
+			Purpose: "apply the selected storyteller rules to this game turn",
+			Content: prompts.InteractiveStoryTurnContextRule(tellerTurnContextPrompt), Placement: agentcontext.PlacementFinalUserPrefix, Limit: StoryRuntimeContextMaxBytes, Included: true,
+		})
+	}
+	if strings.TrimSpace(runtimeContext) != "" {
+		// The Actor write contract is indivisible. Check the effective outer
+		// fragment limit before the shared assembler can truncate its tail.
+		limit := StoryRuntimeContextMaxBytes
+		if input.Budget.MaxFragmentBytes > 0 {
+			limit = min(limit, input.Budget.MaxFragmentBytes)
+		}
+		if len(runtimeContext) > limit {
+			slog.ErrorContext(ctx, "[interactive-agent] runtime context exceeds complete state contract budget", "story_id", c.storyID, "branch_id", c.branchID, "bytes", len(runtimeContext), "actor_state_bytes", len(actorStateRuntime), "limit_bytes", limit)
+			locale := ""
+			if c.cfg != nil {
+				locale = c.cfg.Language
+			}
+			return agentcontext.ModelContextResult{}, fmt.Errorf("%s", i18n.New(locale).T("interactive.contextTooLarge", "bytes", len(runtimeContext), "limit", limit))
+		}
+		fragments = append(fragments, agentcontext.Fragment{
+			ID: "interactive_runtime", Source: "interactive.runtime", Title: "Interactive Runtime Context for This Turn",
+			Purpose: "provide bounded story state, branch plan, active lore, actor state, and turn policy",
+			Content: runtimeContext, Placement: agentcontext.PlacementFinalUserPrefix, Limit: StoryRuntimeContextMaxBytes, Included: true,
+		})
+	}
+	presentationSource := buildPresentationContext(c.workspace, storyCtx.Meta.PresentationSettings, snapshotPresentation(storyCtx.Snapshot, storyCtx.Meta.PresentationSettings), activeBranchPlan, input.UserMessage)
+	fragments = append(fragments, agentcontext.Fragment{
+		ID: "interactive_presentation", Source: presentationSource.Source, Title: presentationSource.Title,
+		Purpose: presentationSource.Purpose, Content: presentationSource.Content,
+		Placement: agentcontext.PlacementFinalUserPrefix, Limit: presentationSource.Limit, Included: true,
+		Note: presentationSource.Note,
+	})
+	baseInstruction := prompts.InteractiveStoryTurnInstruction(input.UserMessage, "", "")
+	history = append(history, agentschema.UserMessageWithAttachments(baseInstruction, input.Attachments))
+	assembled, err := agentcontext.NewAssembler(input.Budget).Assemble(ctx, agentcontext.AssembleRequest{Messages: history, Fragments: fragments})
+	if err != nil {
+		return agentcontext.ModelContextResult{}, err
+	}
+	history = assembled.Messages
+	stableLeadingMessage := ""
+	residentVisible := residentLore
+	for _, fragment := range assembled.Fragments {
+		if fragment.Source == "interactive.resident_lore" {
+			if fragment.Truncated {
+				locale := ""
+				if c.cfg != nil {
+					locale = c.cfg.Language
+				}
+				slog.ErrorContext(ctx, "[lore] game index context exceeds injection budget", "bytes", len(residentLore), "limit", fragment.Limit)
+				return agentcontext.ModelContextResult{}, fmt.Errorf("%s", i18n.New(locale).T("lore.index.contextTooLarge", "limit", fragment.Limit))
+			}
+			residentVisible = fragment.Content
+			if fragment.Included && fragment.Content != "" {
+				stableLeadingMessage = agentcontext.StandaloneMessage(fragment.Title, fragment.Content, "")
+			}
+			break
+		}
+	}
+	sourceParts := interactiveStoryContextSources(storyCtx.Meta.Title, storyCtx.Meta.Origin, protagonistContext, teller, checkpointSummary, branchPlan, residentVisible, loreRevision, loreRuntime, ruleSummary, actorStateRuntime, stateSchemaInitialization, turnHistory, input.UserMessage)
+	sourceParts = append(sourceParts, presentationSource)
+	for index, message := range pendingInputMessages {
+		sourceParts = append(sourceParts, interactiveContextSource{
+			Source: "InterruptedPlayerInput", Title: fmt.Sprintf("Accepted Player Input Without Narrative Output %d", index+1),
+			Purpose: "retain accepted player intent after an interrupted cycle",
+			Content: message, ExactMessage: true,
+		})
+	}
+	sourceParts = resolveInteractiveContextSources(sourceParts, history)
+	sourceSummary := interactiveContextSourceListSummary(sourceParts, assembled.Fragments)
+	contextLedgerParts := interactiveContextLedgerParts(sourceParts, history, c.ToolResultContextPolicy())
+	slog.InfoContext(ctx, fmt.Sprintf(
+		"[interactive-agent] context composition story_id=%s branch_id=%s story_title=%s origin=%s teller_id=%s planning_template_id=%s teller_slots=%s teller_turn_context=%s history_checkpoint=%s branch_plan=%s turns=%d model_turns=%d history=%s turn_instruction=%s sources=%s",
+		c.storyID,
+		storyCtx.Snapshot.BranchID,
+		PartSummary(storyCtx.Meta.Title),
+		PartSummary(storyCtx.Meta.Origin),
+		storyCtx.Meta.StoryTellerID,
+		storyCtx.Meta.PlanningTemplateID,
+		interactiveTellerSlotSummary(teller, "turn_context"),
+		PartSummary(tellerTurnContextPrompt),
+		PartSummary(checkpointSummary),
+		PartSummary(branchPlan),
+		modelHistory.TotalTurns,
+		len(turnHistory.Turns),
+		interactiveMessageListSummary(history),
+		PartSummary(history[len(history)-1].Content),
+		sourceSummary,
+	))
+	return agentcontext.ModelContextResult{
+		Messages: history,
+		Context:  assembled,
+		CommitState: interactiveModelContextCommitState{
+			storyContext: storyCtx, baseParentID: baseParentID, sourceSummary: sourceSummary,
+			contextSources: cloneInteractiveContextSources(sourceParts), contextLedgerParts: contextLedgerParts,
+			stableLeadingMessage: stableLeadingMessage,
+		},
+	}, nil
+}
+
+func interruptedPlayerInputModelMessage(input interactive.PlayerInputAcceptedEvent) string {
+	return "[Accepted player input from an interrupted turn]\n" +
+		"No narrative was produced for this input. Treat it as player intent, not as a completed Turn.\n\n" +
+		strings.TrimSpace(input.Text)
+}
+
+func (c *Conversation) CommitModelInput(ctx context.Context, _ string, assembled agentcontext.ModelContextResult) error {
+	if c == nil {
+		return fmt.Errorf("互动故事不存在")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	state, ok := assembled.CommitState.(interactiveModelContextCommitState)
+	if !ok {
+		return fmt.Errorf("互动故事模型上下文缺少提交状态")
+	}
+	if state.baseParentID != nil {
+		c.WithBaseParentID(*state.baseParentID)
+	}
+	c.refreshOpeningStateSchema(state.storyContext)
+	c.mu.Lock()
+	c.lastSources = state.sourceSummary
+	c.lastContextSources = cloneInteractiveContextSources(state.contextSources)
+	c.lastContextLedgerParts = append([]agentcontext.AuditPart(nil), state.contextLedgerParts...)
+	c.stableLeadingMessage = state.stableLeadingMessage
+	c.mu.Unlock()
+	return nil
+}
+
+// MaterializeAgentCanonicalInput records the accepted player input before
+// model-context assembly. The matching live cycle is excluded from interrupted
+// input projection when its context is assembled immediately afterwards.
+func (c *Conversation) MaterializeAgentCanonicalInput(
+	ctx context.Context,
+	message string,
+	attachments []agentschema.Attachment,
+	checkpoint agentcanonical.CanonicalCheckpoint,
+) (interactive.PlayerInputReceipt, error) {
+	if c == nil || c.store == nil {
+		return interactive.PlayerInputReceipt{}, fmt.Errorf("互动故事不存在")
+	}
+	if err := ctx.Err(); err != nil {
+		return interactive.PlayerInputReceipt{}, err
+	}
+	identity := c.AgentCycleIdentitySnapshot()
+	if !agentrun.ValidCycleIdentity(identity) {
+		return interactive.PlayerInputReceipt{}, fmt.Errorf("canonical game input requires an exact Agent cycle identity")
+	}
+	intent, err := interactive.NewPlayerInputIntent(interactive.DomainCommitIdentity{
+		CommandID: string(identity.CommandID), OperationID: string(identity.OperationID), Cycle: identity.Cycle,
+	}, c.branchID, message)
+	if err != nil {
+		return interactive.PlayerInputReceipt{}, err
+	}
+	intent, err = intent.WithAttachments(attachments)
+	if err != nil {
+		return interactive.PlayerInputReceipt{}, err
+	}
+	c.mu.Lock()
+	inputVisibility := c.inputVisibility
+	c.mu.Unlock()
+	if inputVisibility == agentrun.InputModelOnly {
+		intent, err = intent.WithContextOnly()
+		if err != nil {
+			return interactive.PlayerInputReceipt{}, err
+		}
+	}
+	intent.Checkpoint = checkpoint
+	receipt, err := c.store.CommitPlayerInput(c.storyID, intent)
+	if err != nil {
+		return interactive.PlayerInputReceipt{}, err
+	}
+	c.mu.Lock()
+	c.acceptedPlayerInputID = receipt.Event.ID
+	c.mu.Unlock()
+	return receipt, nil
+}
+
+func (c *Conversation) ContextSourceSummary() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastSources
+}
+
+func (c *Conversation) ContextLedgerParts() []agentcontext.AuditPart {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]agentcontext.AuditPart(nil), c.lastContextLedgerParts...)
+}
+
+func (c *Conversation) ContextLedgerPartsForMessages(messages []*agents.Message) []agentcontext.AuditPart {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	sources := cloneInteractiveContextSources(c.lastContextSources)
+	c.mu.Unlock()
+	parts := interactiveContextLedgerParts(sources, messages, c.ToolResultContextPolicy())
+	c.mu.Lock()
+	c.lastContextLedgerParts = append([]agentcontext.AuditPart(nil), parts...)
+	c.mu.Unlock()
+	return parts
+}
+
+func (c *Conversation) RunTraceMetadata() agentrun.TraceMetadata {
+	if c == nil {
+		return agentrun.TraceMetadata{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	metadata := agentrun.TraceMetadata{StoryID: c.storyID, BranchID: c.branchID}
+	if c.lastTurn != nil {
+		metadata.BranchID = c.lastTurn.BranchID
+		metadata.TurnID = c.lastTurn.ID
+	}
+	return metadata
+}

@@ -1,0 +1,349 @@
+package lifecycle
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"denova/config"
+	"denova/internal/agents/toolapproval"
+
+	agentinteraction "github.com/alfredxw/denova/agent/lifecycle/interaction"
+	agentschema "github.com/alfredxw/denova/agent/schema"
+	agentpermission "github.com/alfredxw/denova/agent/tool/permission"
+)
+
+type PermissionConfig struct {
+	Mode      config.AgentApprovalMode
+	AgentKind string
+	ProjectID string
+	Workspace string
+	// NonInteractive converts approval prompts into blocks. Delegated Agents
+	// report the blocker to their parent instead of waiting for user input.
+	NonInteractive bool
+	Rules          []config.AgentApprovalRule
+
+	LoadRules   func(context.Context) ([]config.AgentApprovalRule, error)
+	PersistRule func(context.Context, config.AgentApprovalRule) error
+	GOOS        string
+	clock       func() time.Time
+}
+
+type denovaPermissionPolicy struct {
+	config PermissionConfig
+	rules  *permissionRuleState
+}
+
+type permissionRuleState struct {
+	mu    sync.RWMutex
+	rules []config.AgentApprovalRule
+}
+
+// NewPermissionPolicy adapts Denova's mature shell/network classifier to the
+// public durable PermissionPolicy. Persisted rules are dynamic policy data,
+// not Definition behavior identity: a remembered rule becomes visible without
+// rebuilding tool definitions.
+func NewPermissionPolicy(configValue PermissionConfig) (agentpermission.PermissionPolicy, error) {
+	configValue.Mode = config.NormalizeAgentApprovalMode(configValue.Mode)
+	configValue.AgentKind = strings.TrimSpace(configValue.AgentKind)
+	configValue.ProjectID = strings.TrimSpace(configValue.ProjectID)
+	configValue.Workspace = strings.TrimSpace(configValue.Workspace)
+	configValue.Rules = config.NormalizeAgentApprovalRules(configValue.Rules)
+	if err := config.ValidateAgentApprovalRules(configValue.Rules); err != nil {
+		return nil, fmt.Errorf("validate Denova Agent approval rules: %w", err)
+	}
+	if configValue.GOOS == "" {
+		configValue.GOOS = runtime.GOOS
+	}
+	if configValue.clock == nil {
+		configValue.clock = time.Now
+	}
+	return &denovaPermissionPolicy{
+		config: configValue,
+		rules:  &permissionRuleState{rules: clonePermissionRules(configValue.Rules)},
+	}, nil
+}
+
+// BindPermissionRuleStore attaches the process-owned durable settings query
+// and transaction without changing the policy's semantic identity. Dynamic
+// rule contents are deliberately excluded from Definition identity.
+func BindPermissionRuleStore(
+	policy agentpermission.PermissionPolicy,
+	load func(context.Context) ([]config.AgentApprovalRule, error),
+	persist func(context.Context, config.AgentApprovalRule) error,
+) agentpermission.PermissionPolicy {
+	denova, ok := policy.(*denovaPermissionPolicy)
+	if !ok || denova == nil {
+		return policy
+	}
+	cloned := *denova
+	cloned.config = denova.config
+	cloned.config.LoadRules = load
+	cloned.config.PersistRule = persist
+	return &cloned
+}
+
+func (policy *denovaPermissionPolicy) Identity() agentschema.CapabilityIdentity {
+	payload := struct {
+		Mode           config.AgentApprovalMode
+		AgentKind      string
+		ProjectID      string
+		Workspace      string
+		GOOS           string
+		NonInteractive bool
+		Matchers       []string
+	}{
+		policy.config.Mode, policy.config.AgentKind, policy.config.ProjectID, policy.config.Workspace,
+		policy.config.GOOS, policy.config.NonInteractive, []string{
+			fmt.Sprintf("%s.v%d", config.AgentApprovalMatcherShell, config.AgentApprovalRuleMatcherVersion),
+			fmt.Sprintf("%s.v%d", config.AgentApprovalMatcherFilesystem, config.AgentApprovalRuleMatcherVersion),
+		},
+	}
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
+	return agentschema.CapabilityIdentity{
+		Kind: "denova.permission", Version: 3, ConfigHash: hex.EncodeToString(digest[:]),
+	}
+}
+
+func (policy *denovaPermissionPolicy) Evaluate(ctx context.Context, request agentpermission.PermissionRequest) (agentpermission.PermissionDecision, error) {
+	rules, err := policy.rulesForEvaluation(ctx)
+	if err != nil {
+		return agentpermission.PermissionDecision{}, err
+	}
+	decision := policy.evaluate(request, rules)
+	if err := decision.Validate(); err != nil {
+		return agentpermission.PermissionDecision{}, err
+	}
+	kind := agentpermission.PermissionAsk
+	switch decision.Action {
+	case toolapproval.ActionAllow:
+		kind = agentpermission.PermissionAllow
+	case toolapproval.ActionPrompt:
+		if policy.config.NonInteractive {
+			kind = agentpermission.PermissionBlock
+		} else {
+			kind = agentpermission.PermissionAsk
+		}
+	case toolapproval.ActionDeny:
+		kind = agentpermission.PermissionBlock
+	default:
+		return agentpermission.PermissionDecision{}, fmt.Errorf("unsupported Denova approval action %q", decision.Action)
+	}
+	details := agentpermission.PermissionDetails{
+		Mode: string(policy.config.Mode), Command: decision.Command, Cwd: decision.Cwd,
+		Risk: string(decision.Risk), RuleID: decision.RuleID,
+	}
+	if decision.Details != "" {
+		details.Details = strings.TrimSpace(strings.ToValidUTF8(decision.Details, "\uFFFD"))
+	} else if decision.Command == "" {
+		details.Details = strings.TrimSpace(strings.ToValidUTF8(string(request.Arguments), "\uFFFD"))
+	}
+	if decision.Remember != nil && kind == agentpermission.PermissionAsk {
+		details.CanRemember = true
+		details.RuleMatcherVersion = decision.Remember.MatcherVersion
+		details.RuleMatchKey = decision.Remember.MatchKey
+		details.RuleDisplayPattern = decision.Remember.DisplayPattern
+	}
+	reason := localizedApprovalReason(decision.Reason)
+	if policy.config.NonInteractive && decision.Action == toolapproval.ActionPrompt {
+		reason = agentinteraction.LocalizedText{
+			Chinese: "子 Agent 不能请求用户授权；请将受阻原因返回给父 Agent。",
+			English: "Delegated Agents cannot request user approval; return the blocker to the parent Agent.",
+		}
+	}
+	return agentpermission.PermissionDecision{Kind: kind, Reason: reason, Details: details}, nil
+}
+
+func (policy *denovaPermissionPolicy) Resolve(ctx context.Context, request agentpermission.PermissionResolveRequest) (agentpermission.PermissionResolvedDecision, error) {
+	switch request.Resolution.Permission {
+	case agentinteraction.PermissionAllowOnce:
+		return agentpermission.PermissionResolvedDecision{Allowed: true}, nil
+	case agentinteraction.PermissionDeny:
+		return agentpermission.PermissionResolvedDecision{}, nil
+	case agentinteraction.PermissionRemember:
+		rules, err := policy.rulesForEvaluation(ctx)
+		if err != nil {
+			return agentpermission.PermissionResolvedDecision{}, err
+		}
+		decision := policy.evaluate(request.Request, rules)
+		if err := decision.Validate(); err != nil {
+			return agentpermission.PermissionResolvedDecision{}, err
+		}
+		if decision.Action == toolapproval.ActionAllow {
+			return agentpermission.PermissionResolvedDecision{Allowed: true, Remembered: true}, nil
+		}
+		if decision.Action != toolapproval.ActionPrompt || decision.Remember == nil {
+			return agentpermission.PermissionResolvedDecision{}, errors.New("Denova approval does not permit a remembered workspace rule")
+		}
+		if policy.config.PersistRule == nil {
+			return agentpermission.PermissionResolvedDecision{}, errors.New("Denova Permission remember requires a rule store")
+		}
+		approvedInput := strings.TrimSpace(decision.Command)
+		if approvedInput == "" {
+			approvedInput = strings.TrimSpace(decision.Details)
+		}
+		if approvedInput == "" {
+			approvedInput = strings.TrimSpace(string(request.Request.Arguments))
+		}
+		rule, err := toolapproval.NewWorkspaceRule(
+			policy.config.ProjectID,
+			policy.config.Workspace,
+			*decision.Remember,
+			toolapproval.ArgumentsHash(string(request.Request.Arguments)),
+			approvedInput,
+			decision.Cwd,
+			decision.RuleID,
+			policy.config.clock(),
+		)
+		if err != nil {
+			return agentpermission.PermissionResolvedDecision{}, err
+		}
+		if err := policy.rules.canRemember(rule); err != nil {
+			return agentpermission.PermissionResolvedDecision{}, err
+		}
+		if err := policy.config.PersistRule(ctx, rule); err != nil {
+			return agentpermission.PermissionResolvedDecision{}, fmt.Errorf("persist Denova Agent approval rule: %w", err)
+		}
+		if err := policy.rules.remember(rule); err != nil {
+			return agentpermission.PermissionResolvedDecision{}, err
+		}
+		return agentpermission.PermissionResolvedDecision{Allowed: true, Remembered: true}, nil
+	default:
+		return agentpermission.PermissionResolvedDecision{}, errors.New("invalid Denova Permission resolution")
+	}
+}
+
+func (policy *denovaPermissionPolicy) rulesForEvaluation(ctx context.Context) ([]config.AgentApprovalRule, error) {
+	if policy.config.LoadRules == nil {
+		return policy.rules.snapshot(), nil
+	}
+	rules, err := policy.config.LoadRules(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load Denova Agent approval rules: %w", err)
+	}
+	rules = config.NormalizeAgentApprovalRules(rules)
+	if err := config.ValidateAgentApprovalRules(rules); err != nil {
+		return nil, fmt.Errorf("validate loaded Denova Agent approval rules: %w", err)
+	}
+	policy.rules.replace(rules)
+	return clonePermissionRules(rules), nil
+}
+
+func (policy *denovaPermissionPolicy) evaluate(request agentpermission.PermissionRequest, rules []config.AgentApprovalRule) toolapproval.Decision {
+	if decision, matched := trajectoryPermission(request); matched {
+		return decision
+	}
+	attachmentPaths := make([]string, 0, len(request.Attachments))
+	for _, attachment := range request.Attachments {
+		path := strings.TrimSpace(attachment.RuntimePath)
+		if path == "" {
+			path = strings.TrimSpace(attachment.Path)
+		}
+		if path != "" {
+			attachmentPaths = append(attachmentPaths, path)
+		}
+	}
+	return toolapproval.Evaluate(toolapproval.Request{
+		Mode: policy.config.Mode, ProjectID: policy.config.ProjectID, Workspace: policy.config.Workspace,
+		ToolName: request.Tool, Arguments: string(request.Arguments), Descriptor: request.Descriptor,
+		GOOS: policy.config.GOOS, Rules: rules, AttachmentPaths: attachmentPaths,
+	})
+}
+
+// trajectoryPermission keeps the redacted read-only evidence projection out
+// of workspace approval prompts. Only the Agents Project receives this URI
+// adapter, so recognizing the scheme cannot grant another Agent a capability.
+func trajectoryPermission(request agentpermission.PermissionRequest) (toolapproval.Decision, bool) {
+	toolName := strings.TrimSpace(request.Tool)
+	switch toolName {
+	case "read":
+		var input struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(request.Arguments, &input) != nil {
+			return toolapproval.Decision{}, false
+		}
+		path := strings.ToLower(strings.TrimSpace(input.Path))
+		if !strings.HasPrefix(path, "trajectory://") {
+			return toolapproval.Decision{}, false
+		}
+	default:
+		return toolapproval.Decision{}, false
+	}
+	return toolapproval.Decision{
+		Action: toolapproval.ActionAllow, Risk: toolapproval.RiskLow,
+		RuleID: "trajectory_read", Reason: "Trajectory resources are a redacted read-only evidence projection.",
+	}, true
+}
+
+func (state *permissionRuleState) snapshot() []config.AgentApprovalRule {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return clonePermissionRules(state.rules)
+}
+
+func (state *permissionRuleState) replace(rules []config.AgentApprovalRule) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.rules = clonePermissionRules(rules)
+}
+
+func (state *permissionRuleState) remember(rule config.AgentApprovalRule) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if err := checkPermissionRuleConflict(state.rules, rule); err != nil {
+		return err
+	}
+	for _, current := range state.rules {
+		if current.ID == rule.ID {
+			return nil
+		}
+	}
+	state.rules = config.NormalizeAgentApprovalRules(append(state.rules, rule))
+	return nil
+}
+
+func (state *permissionRuleState) canRemember(rule config.AgentApprovalRule) error {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return checkPermissionRuleConflict(state.rules, rule)
+}
+
+func checkPermissionRuleConflict(rules []config.AgentApprovalRule, rule config.AgentApprovalRule) error {
+	for _, current := range rules {
+		if current.ID == rule.ID && !samePermissionRuleBoundary(current, rule) {
+			return fmt.Errorf("Agent approval rule id %q is already bound to another authorization boundary", rule.ID)
+		}
+	}
+	return nil
+}
+
+func samePermissionRuleBoundary(left, right config.AgentApprovalRule) bool {
+	return left.Scope == right.Scope && left.ProjectID == right.ProjectID &&
+		left.Workspace == right.Workspace && left.ToolName == right.ToolName &&
+		left.Matcher == right.Matcher && left.MatcherVersion == right.MatcherVersion && left.MatchKey == right.MatchKey &&
+		left.DisplayPattern == right.DisplayPattern
+}
+
+func clonePermissionRules(rules []config.AgentApprovalRule) []config.AgentApprovalRule {
+	return append([]config.AgentApprovalRule(nil), rules...)
+}
+
+func localizedApprovalReason(reason string) agentinteraction.LocalizedText {
+	reason = strings.TrimSpace(reason)
+	parts := strings.SplitN(reason, " / ", 2)
+	if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+		return agentinteraction.LocalizedText{Chinese: strings.TrimSpace(parts[0]), English: strings.TrimSpace(parts[1])}
+	}
+	return agentinteraction.LocalizedText{Chinese: reason, English: reason}
+}
+
+var _ agentpermission.PermissionPolicy = (*denovaPermissionPolicy)(nil)

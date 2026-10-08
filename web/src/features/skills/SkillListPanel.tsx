@@ -1,0 +1,255 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ChevronDown, Download, FileText, LayoutGrid, ListFilter, Plus, Search } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { EmbeddedSidebar } from '@/components/navigation/embedded-sidebar'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
+import {
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarSeparator,
+} from '@/components/ui/sidebar'
+import type { SkillScope, SkillSnapshot } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import type { SkillsMode } from './skill-utils'
+import { keyOf, scopeLabel, skillCategory, skillCategoryLabel, skillCategoryOptions, skillScopes } from './skill-utils'
+
+interface SkillListPanelProps {
+  snapshot: SkillSnapshot
+  selectedKey: string | null
+  loading: boolean
+  mode: SkillsMode
+  onLibrary: () => void
+  onCreate: () => void
+  onInstall: () => void
+  onSelect: (key: string) => void
+}
+
+/** Skill library navigation composed from the shadcn Sidebar primitives. */
+export function SkillListPanel({
+  snapshot,
+  selectedKey,
+  loading,
+  mode,
+  onLibrary,
+  onCreate,
+  onInstall,
+  onSelect,
+}: SkillListPanelProps) {
+  const { t } = useTranslation()
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [query, setQuery] = useState('')
+  const [openScopes, setOpenScopes] = useState<Partial<Record<SkillScope, boolean>>>({})
+  const selectedScope = snapshot.skills.find((skill) => keyOf(skill) === selectedKey)?.scope
+  const selectingSkill = mode === 'editor' || mode === 'config'
+  const revealSelected = useCallback((element: HTMLButtonElement | null) => {
+    element?.scrollIntoView({ block: 'nearest' })
+  }, [])
+
+  useEffect(() => {
+    if (!selectingSkill || !selectedScope) return
+    setQuery('')
+    setCategoryFilter('all')
+    setOpenScopes((current) => ({ ...current, [selectedScope]: true }))
+  }, [selectedKey, selectedScope, selectingSkill])
+
+  const categories = useMemo(() => {
+    const discovered = Array.from(new Set(snapshot.skills.map(skillCategory)))
+    const standard = skillCategoryOptions.filter((category) => discovered.includes(category))
+    const custom = discovered
+      .filter((category) => !skillCategoryOptions.includes(category as typeof skillCategoryOptions[number]))
+      .sort()
+    return [...standard, ...custom]
+  }, [snapshot.skills])
+
+  useEffect(() => {
+    if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) setCategoryFilter('all')
+  }, [categories, categoryFilter])
+
+  const searchWords = useMemo(() => query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean), [query])
+  const visibleSkills = useMemo(() => snapshot.skills.filter((skill) => {
+    if (categoryFilter !== 'all' && skillCategory(skill) !== categoryFilter) return false
+    if (searchWords.length === 0) return true
+    const searchable = `${skill.name}\n${skill.description}\n${skillCategoryLabel(skillCategory(skill), t)}`.toLocaleLowerCase()
+    return searchWords.every((word) => searchable.includes(word))
+  }), [categoryFilter, searchWords, snapshot.skills, t])
+
+  const sections = useMemo(() => skillScopes.map((scope) => ({
+    scope,
+    scopeInfo: snapshot.scopes.find((item) => item.scope === scope),
+    skills: visibleSkills.filter((skill) => skill.scope === scope),
+  })).filter((section) => (
+    searchWords.length === 0 && categoryFilter === 'all'
+      ? true
+      : section.skills.length > 0
+  )), [categoryFilter, searchWords.length, snapshot.scopes, visibleSkills])
+
+  const showSkeleton = loading && snapshot.skills.length === 0
+  const showEmpty = !showSkeleton && visibleSkills.length === 0
+  const emptyTitle = searchWords.length > 0
+    ? t('common.searchNoResults')
+    : categoryFilter === 'all'
+      ? t('skills.empty')
+      : t('skills.category.empty')
+
+  return (
+    <EmbeddedSidebar>
+        <SidebarHeader className="gap-3 p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === 'create' ? 'secondary' : 'default'}
+              aria-pressed={mode === 'create'}
+              onClick={onCreate}
+            >
+              <Plus data-icon="inline-start" />
+              {t('skills.create.newButton')}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === 'install' ? 'secondary' : 'outline'}
+              aria-pressed={mode === 'install'}
+              onClick={onInstall}
+            >
+              <Download data-icon="inline-start" />
+              {t('skills.install.action')}
+            </Button>
+          </div>
+
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={mode === 'library'} aria-current={mode === 'library' ? 'page' : undefined} onClick={onLibrary}>
+                <LayoutGrid aria-hidden="true" />
+                <span>{t('skills.library.title')}</span>
+              </SidebarMenuButton>
+              <SidebarMenuBadge>{snapshot.skills.length}</SidebarMenuBadge>
+            </SidebarMenuItem>
+          </SidebarMenu>
+
+          <InputGroup className="h-auto">
+            <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+            <InputGroupInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('skills.searchPlaceholder')}
+              aria-label={t('skills.searchPlaceholder')}
+            />
+            <InputGroupAddon align="inline-end" className="py-0.5">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <InputGroupButton
+                    type="button"
+                    variant={categoryFilter === 'all' ? 'ghost' : 'secondary'}
+                    aria-label={t('skills.category.filter')}
+                    title={categoryFilter === 'all' ? t('skills.category.all') : skillCategoryLabel(categoryFilter, t)}
+                  >
+                    <ListFilter aria-hidden="true" />
+                  </InputGroupButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-max max-w-(--radix-dropdown-menu-content-available-width)">
+                  <DropdownMenuGroup>
+                    <DropdownMenuCheckboxItem checked={categoryFilter === 'all'} onSelect={() => setCategoryFilter('all')}>
+                      {t('skills.category.all')}
+                    </DropdownMenuCheckboxItem>
+                    {categories.map((category) => (
+                      <DropdownMenuCheckboxItem key={category} checked={categoryFilter === category} onSelect={() => setCategoryFilter(category)}>
+                        <span className="min-w-0 break-words">{skillCategoryLabel(category, t)}</span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </InputGroupAddon>
+          </InputGroup>
+        </SidebarHeader>
+
+        <SidebarSeparator />
+        <SidebarContent>
+          {showSkeleton ? (
+            <SidebarGroup>
+              <SidebarGroupLabel>{t('skills.loading')}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <SidebarMenuItem key={index}>
+                      <SidebarMenuSkeleton showIcon />
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ) : showEmpty ? (
+            <EmptyState variant="compact" title={emptyTitle} className="p-4 text-muted-foreground" />
+          ) : sections.map(({ scope, scopeInfo, skills }) => {
+            const open = openScopes[scope] ?? skills.length > 0
+            const label = scopeLabel(scope, t)
+            return (
+              <Collapsible
+                key={scope}
+                open={open}
+                onOpenChange={(nextOpen) => setOpenScopes((current) => ({ ...current, [scope]: nextOpen }))}
+              >
+                <SidebarGroup className="py-1">
+                  <SidebarGroupLabel asChild title={scopeInfo?.path} className="gap-2">
+                    <CollapsibleTrigger
+                      aria-label={`${open ? t('common.collapse') : t('common.expand')}${label}`}
+                      aria-expanded={open}
+                    >
+                      <ChevronDown className={cn('transition-transform', !open && '-rotate-90')} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      <span className="text-sidebar-foreground/50">{skills.length}</span>
+                      <span className="text-sidebar-foreground/50">
+                        {scopeInfo?.writable ? t('skills.scope.editable') : t('skills.scope.readonly')}
+                      </span>
+                    </CollapsibleTrigger>
+                  </SidebarGroupLabel>
+                  <CollapsibleContent>
+                    <SidebarGroupContent>
+                      <SidebarMenu>
+                        {skills.map((skill) => (
+                          <SidebarMenuItem key={keyOf(skill)}>
+                            <SidebarMenuButton
+                              type="button"
+                              size="lg"
+                              isActive={selectingSkill && selectedKey === keyOf(skill)}
+                              aria-current={selectingSkill && selectedKey === keyOf(skill) ? 'page' : undefined}
+                              ref={selectingSkill && selectedKey === keyOf(skill) ? revealSelected : undefined}
+                              className={cn((!skill.active || skill.enabled === false) && 'pr-20')}
+                              onClick={() => onSelect(keyOf(skill))}
+                            >
+                              <FileText aria-hidden="true" />
+                              <div className="grid min-w-0 flex-1 gap-0.5">
+                                <span className="truncate font-mono text-xs text-sidebar-foreground">/{skill.name}</span>
+                                <span className="truncate text-[11px] text-sidebar-foreground/60">
+                                  {skill.description || skillCategoryLabel(skillCategory(skill), t)}
+                                </span>
+                              </div>
+                            </SidebarMenuButton>
+                            {(!skill.active || skill.enabled === false) && <SidebarMenuBadge>{t(skill.enabled === false ? 'skills.library.disabled' : 'skills.shadowed')}</SidebarMenuBadge>}
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    </SidebarGroupContent>
+                  </CollapsibleContent>
+                </SidebarGroup>
+              </Collapsible>
+            )
+          })}
+        </SidebarContent>
+
+    </EmbeddedSidebar>
+  )
+}

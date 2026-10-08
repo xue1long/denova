@@ -1,0 +1,838 @@
+import { visibleStoryPresentation } from '../presentation'
+import { Eye, EyeOff, Maximize2, Square } from 'lucide-react'
+import { StoryStageArtwork } from './story-stage/StoryStageArtwork'
+import { useGameStories } from '@/features/platform/game-story-context'
+import { GameStorySetup } from '@/features/platform/GameStorySetup'
+import { useStorySpeech } from '../use-story-speech'
+import { useImageModelConfigured } from '@/features/settings/use-image-model-configured'
+import { SpeechPlayback } from '@/features/speech/SpeechPlayback'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LoadingState } from '@/components/common/LoadingState'
+import { Button } from '@/components/ui/button'
+import { AgentTaskControls } from '@/components/Chat/AgentTaskControls'
+import { CONTEXT_ANALYSIS_SIMULATED_MESSAGE } from '@/components/Chat/ContextAnalysisDialog'
+import { MessageList, type TurnScrollRequest } from '@/components/Chat/MessageList'
+import { AgentSubAgentSessionPanel } from '@/components/Chat/AgentSubAgentSessionPanel'
+import { useToolNavigation } from '@/components/Chat/tool-navigation'
+import type { ComposerTokenInputHandle, ComposerTokenSpec, ComposerTrigger } from '@/components/Chat/composer-token-input'
+import type { ContextAnalysis } from '@/lib/api'
+import type { AgentUIMessage } from '@/lib/agent-ui'
+import { agentMessageDisplayText, createAgentDataMessage } from '@/lib/agent-ui-message'
+import { agentSubAgentSessionKey, agentViewContent, agentViewAskID, agentViewAskInteraction, type AgentMessageView } from '@/lib/agent-message-view'
+import { useSkillCommands } from '@/hooks/useSkillCommands'
+import { useConversationConfig } from '@/features/conversation-config/use-conversation-config'
+import type { ConversationConfigBinding, ConversationConfigChanges } from '@/features/conversation-config/types'
+import { supportsRuntimeOperation } from '@/features/conversation-config/types'
+import { analyzeInteractiveContext, getActiveInteractiveChat, getInteractiveHistoryPage, removeInteractiveContextCompaction, resolveInteractiveAsk, switchInteractiveTurnVersion, updateInteractiveTurnNarrative } from '../api'
+import { sanitizeStoredNarrative } from '../stream-parser'
+import { emptyStoryStageRun, useInteractiveStore } from '../stores/interactive-store'
+import type { StoryStageRunState } from '../stores/interactive-store'
+import { useInteractiveAgentCommands, type StoryStageRuntimeUpdater } from '../use-interactive-agent-commands'
+import { DEFAULT_NARRATIVE_STYLE_ID } from '../narrative-style'
+import { StoryStageControls } from './story-stage/StoryStageControls'
+import { NewStorySetupPanel } from './NewStorySetupPanel'
+import { TurnNavigator } from './TurnNavigator'
+import { DEFAULT_STORY_STATE_DISPLAY, type StoryStateDisplayPreference } from './story-state/display-preference'
+import { StoryStateLedger } from './story-state/StoryStateLedger'
+import { StateDetailsDialog } from './story-state/StateDetailsDialog'
+import { buildStoryStateModel } from './story-state/model'
+import { useStagePreferences } from './story-stage/use-stage-preferences'
+import { parseInlineStyleScenes, storyStageSnapshotKey } from './story-stage/utils'
+import { useLiveMessageAccumulator } from './story-stage/use-live-message-accumulator'
+import { useStoryStageMessages } from './story-stage/use-story-stage-messages'
+import { useStoryHistoryWindow } from './story-stage/use-story-history-window'
+import { useStoryImages } from './story-stage/use-story-images'
+import { useStoryStageRuntime } from './story-stage/use-story-stage-runtime'
+import { StoryStageComposer } from './story-stage/StoryStageComposer'
+import { StoryStageHeader } from './story-stage/StoryStageHeader'
+import { buildStoryStageCommandMenu } from './story-stage/story-stage-commands'
+import { branchCreationSourceFromMessage, branchCreationSourceFromTurn } from './branching/model'
+import type { StoryStageProps } from './story-stage/story-stage-props'
+import { useIsMobile } from '@/hooks/useIsMobile'
+
+const DEFAULT_READING_FONT_SIZE = 18
+const EMPTY_STAGE_RUN = emptyStoryStageRun()
+
+export function StoryStage({ active = true, projectId, workspace, styleSceneSuggestions = [], stories = [], story, tellers = [], planningTemplates = [], imagePresets = [], recentNarrativeStyleID = DEFAULT_NARRATIVE_STYLE_ID, narrativeStyleLoading = false, storyId, branchId, snapshot, snapshotLoading = false, loreItems = [], bookOpeningPresets = [], directorPanelVisible = true, stateDisplayPreference = DEFAULT_STORY_STATE_DISPLAY, onStorySelect = noop, onStoryCreate = noop, onStorySetupUpdate = noop, onStoryDelete = noop, onStoryRename, onRequestLoreInit, onOpenDirectorConfig, onToggleDirectorPanel, onRequestCreateBranch, onStateDisplayPreferenceChange = noopStateDisplayPreferenceChange, onTurnPersisted = noopTurnPersisted, onDone }: StoryStageProps) {
+  const navigation = useToolNavigation()
+  const { t } = useTranslation()
+  const gameStories = useGameStories()
+  const [localCreating, setLocalCreating] = useState(false)
+  const creatingStory = gameStories?.creating ?? localCreating
+  const setCreatingStory = gameStories?.setCreating ?? setLocalCreating
+  const imageConfigured = useImageModelConfigured(projectId)
+  const conversationBinding = useMemo<ConversationConfigBinding | undefined>(() => storyId ? {
+    mode: 'interactive', project_id: projectId, story_id: storyId,
+    branch_id: branchId || snapshot?.branch_id || 'main',
+  } : undefined, [branchId, projectId, snapshot?.branch_id, storyId])
+  const setupConversationBinding = useMemo<ConversationConfigBinding | undefined>(() => creatingStory
+    ? { mode: 'interactive', project_id: projectId }
+    : conversationBinding, [conversationBinding, creatingStory, projectId])
+  const conversationConfig = useConversationConfig(setupConversationBinding)
+  const approvalReady = conversationConfig.initialized && !conversationConfig.saving
+  const isMobile = useIsMobile()
+  const storyStateModel = useMemo(() => buildStoryStateModel(snapshot), [snapshot])
+  const [input, setInput] = useState('')
+  const [styleScenes, setStyleScenes] = useState<string[]>([])
+  const [styleSceneQuery, setStyleSceneQuery] = useState<string | null>(null)
+  const [showSkillCommands, setShowSkillCommands] = useState(false)
+  const [skillCommandQuery, setSkillCommandQuery] = useState<string | null>(null)
+  const [activeSkillCommandIndex, setActiveSkillCommandIndex] = useState(0)
+  const [inputFloatHeight, setInputFloatHeight] = useState(0)
+  const [messageScroller, setMessageScroller] = useState<HTMLElement | null>(null)
+  const [scrollbarWidth, setScrollbarWidth] = useState(0)
+  const inputRef = useRef<ComposerTokenInputHandle | null>(null)
+  const inputFloatRef = useRef<HTMLDivElement | null>(null)
+  const skillCommands = useSkillCommands({
+    agentKey: 'interactive_story',
+    projectId,
+  })
+  const snapshotKey = storyStageSnapshotKey(storyId, branchId, snapshot)
+  const stageKey = `${workspace || 'current'}:${storyId || 'none'}:${branchId || snapshot?.branch_id || 'main'}`
+  const { displaySnapshot, historyWindow, prependPage: prependHistoryPage, resetToLatest: resetHistoryToLatest, loadExecutionDetails } = useStoryHistoryWindow(stageKey, snapshot)
+  const speech = useStorySpeech({ owner: stageKey, story, snapshot: displaySnapshot, active })
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const historyStageRef = useRef(stageKey)
+  useEffect(() => {
+    historyStageRef.current = stageKey
+    setHistoryLoading(false)
+  }, [stageKey])
+  const stageRun = useInteractiveStore((state) => state.storyStageRuns[stageKey] || EMPTY_STAGE_RUN)
+  const setStoryStageRun = useInteractiveStore((state) => state.setStoryStageRun)
+  const clearStoryStageRun = useInteractiveStore((state) => state.clearStoryStageRun)
+  const streaming = stageRun.streaming
+  const activityContent = stageRun.activityContent
+  const liveMessages = stageRun.liveMessages
+  const rewindTurnId = stageRun.rewindTurnId
+  const branchTerminal = snapshot?.current_turn?.terminal_outcome?.terminal === true
+  const [replyEditTarget, setReplyEditTarget] = useState<{
+    turnId: string
+    branchId: string
+    initialContent: string
+    expectedNarrative: string
+  } | null>(null)
+  const [editingTurn, setEditingTurn] = useState<{
+    id: string
+    content: string
+  } | null>(null)
+  const [switchingVersionTurnId, setSwitchingVersionTurnId] = useState<string | null>(null)
+  const [hotChoicesExpanded, setHotChoicesExpanded] = useState(false)
+  const [pendingOpeningStoryId, setPendingOpeningStoryId] = useState('')
+  const [contextAnalysisOpen, setContextAnalysisOpen] = useState(false)
+  const [tokenUsageOpen, setTokenUsageOpen] = useState(false)
+  const [contextAnalysisLoading, setContextAnalysisLoading] = useState(false)
+  const [contextAnalysisError, setContextAnalysisError] = useState<string | null>(null)
+  const [contextAnalysis, setContextAnalysis] = useState<ContextAnalysis | null>(null)
+  const [activeSubAgentSessionKey, setActiveSubAgentSessionKey] = useState('')
+  const [activeTurnAnchorId, setActiveTurnAnchorId] = useState('')
+  const [textHidden, setTextHidden] = useState(false)
+  useEffect(() => setTextHidden(false), [stageKey])
+  useEffect(() => {
+    if (!textHidden) return
+    const restore = (event: KeyboardEvent) => { if (event.key === 'Escape') setTextHidden(false) }
+    window.addEventListener('keydown', restore)
+    return () => window.removeEventListener('keydown', restore)
+  }, [textHidden])
+  const [turnScrollRequest, setTurnScrollRequest] = useState<TurnScrollRequest>()
+
+  useEffect(() => {
+    setReplyEditTarget(null)
+  }, [stageKey])
+  useEffect(() => {
+    if (streaming && !historyWindow.followLatest) resetHistoryToLatest()
+  }, [historyWindow.followLatest, resetHistoryToLatest, streaming])
+  const previousSnapshotKeyRef = useRef(snapshotKey)
+  const stagePreferences = useStagePreferences(projectId)
+  const stageTextStyle = useMemo<CSSProperties>(
+    () => ({
+      fontSize: `var(--nova-reading-font-size, ${DEFAULT_READING_FONT_SIZE}px)`,
+      lineHeight: stagePreferences.lineHeight,
+      fontFamily: 'var(--nova-reading-font-family)',
+    }),
+    [stagePreferences.lineHeight],
+  )
+  const inputTextStyle = useMemo<CSSProperties>(
+    () => ({
+      fontSize: `min(var(--nova-reading-font-size, ${DEFAULT_READING_FONT_SIZE}px), 16px)`,
+      lineHeight: 1.35,
+      fontFamily: 'var(--nova-reading-font-family)',
+    }),
+    [],
+  )
+
+  const updateStageRun = useCallback(
+    (updater: Partial<StoryStageRunState> | ((current: StoryStageRunState) => StoryStageRunState)) => {
+      setStoryStageRun(stageKey, updater)
+    },
+    [setStoryStageRun, stageKey],
+  )
+
+  const setStageRuntime = useCallback(
+    (runtime: StoryStageRuntimeUpdater) => updateStageRun((current) => ({
+      ...current,
+      runtime: typeof runtime === 'function' ? runtime(current.runtime) : runtime,
+    })),
+    [updateStageRun],
+  )
+  const readStageRuntime = useCallback(
+    () => useInteractiveStore.getState().storyStageRuns[stageKey]?.runtime || EMPTY_STAGE_RUN.runtime,
+    [stageKey],
+  )
+  const interactiveAgentCommands = useInteractiveAgentCommands({
+    storyId,
+    branchId,
+    readRuntime: readStageRuntime,
+    onRuntimeChange: setStageRuntime,
+  })
+  const setStageStreaming = useCallback(
+    (value: boolean) => {
+      updateStageRun({ streaming: value })
+    },
+    [updateStageRun],
+  )
+
+  const setStageActivityContent = useCallback(
+    (value: string) => {
+      updateStageRun({ activityContent: value })
+    },
+    [updateStageRun],
+  )
+
+  const setStageLiveMessages = useCallback(
+    (updater: AgentUIMessage[] | ((current: AgentUIMessage[]) => AgentUIMessage[])) => {
+      updateStageRun((current) => ({
+        ...current,
+        liveMessages: typeof updater === 'function' ? updater(current.liveMessages) : updater,
+      }))
+    },
+    [updateStageRun],
+  )
+
+  const liveAccumulator = useLiveMessageAccumulator({
+    setMessages: setStageLiveMessages,
+  })
+  const storyImages = useStoryImages({
+    stageKey,
+    storyId,
+    branchId,
+    snapshot,
+    t,
+    onDone,
+    setActivity: setStageActivityContent,
+  })
+  const liveTurnNavigationAnchorId = useMemo(() => `live:${stageKey}`, [stageKey])
+  const {
+    agentMessages,
+    tokenUsageMessages,
+    turnNavigationItems,
+    turnsById,
+  } = useStoryStageMessages({
+    pendingAsk: stageRun.runtime.pendingAsk,
+    snapshot: displaySnapshot,
+    rewindTurnId,
+    liveMessages,
+    streaming,
+    stageKey,
+    liveTurnNavigationAnchorId,
+    optimisticInteractiveImages: storyImages.optimisticImages,
+    belongsToStage: liveAccumulator.belongsToStage,
+    renderKeyFor: liveAccumulator.renderKeyFor,
+  })
+  const {
+    commands: filteredSkillCommands,
+    builtInItems: filteredBuiltInCommandItems,
+    skillItems: filteredSkillCommandItems,
+  } = useMemo(() => buildStoryStageCommandMenu(skillCommandQuery, skillCommands, {
+    compactDescription: t('chat.command.compact.desc'),
+    compactHint: t('chat.command.compact.hint'),
+    skillHint: t('chat.command.skill.hint'),
+  }), [skillCommandQuery, skillCommands, t])
+
+  useEffect(() => {
+    if (previousSnapshotKeyRef.current === snapshotKey) return
+    if (streaming) return
+    previousSnapshotKeyRef.current = snapshotKey
+    setStageActivityContent('')
+    if (liveMessages.length > 0) {
+      clearStoryStageRun(stageKey)
+    }
+  }, [clearStoryStageRun, liveMessages.length, setStageActivityContent, snapshotKey, stageKey, streaming])
+
+  useEffect(() => {
+    if (activeSkillCommandIndex >= filteredSkillCommands.length) setActiveSkillCommandIndex(0)
+  }, [activeSkillCommandIndex, filteredSkillCommands.length])
+
+  const handleTurnNavigationSelect = useCallback((anchorId: string) => {
+    setActiveTurnAnchorId(anchorId)
+    setTurnScrollRequest((current) => ({
+      anchorId,
+      requestId: (current?.requestId || 0) + 1,
+    }))
+  }, [])
+  const handleVisibleTurnAnchorChange = useCallback((anchorId: string) => {
+    setActiveTurnAnchorId(anchorId)
+  }, [])
+  useEffect(() => {
+    const fallbackAnchorId = turnNavigationItems[turnNavigationItems.length - 1]?.anchorId || ''
+    setActiveTurnAnchorId((current) => {
+      if (!current) return fallbackAnchorId
+      return turnNavigationItems.some((item) => item.anchorId === current) ? current : fallbackAnchorId
+    })
+  }, [turnNavigationItems])
+  const openSubAgentSession = useCallback((view: AgentMessageView) => {
+    const key = agentSubAgentSessionKey(view)
+    if (key) setActiveSubAgentSessionKey(key)
+  }, [])
+  const scrollResetKey = `${storyId || 'none'}:${branchId || snapshot?.branch_id || 'main'}`
+  const hotChoices = useMemo(
+    () =>
+      (snapshot?.current_turn?.turn_result?.choices || snapshot?.current_turn?.hot_state?.choices || [])
+        .map((choice) => choice.trim())
+        .filter(Boolean),
+    [snapshot?.current_turn?.hot_state?.choices, snapshot?.current_turn?.turn_result?.choices],
+  )
+  const canUseHotChoices = hotChoices.length > 0 && !branchTerminal && !streaming && !editingTurn && Boolean(storyId)
+  const showHotChoices = canUseHotChoices && hotChoicesExpanded
+  const messageListBottomPadding = inputFloatHeight > 0 ? inputFloatHeight + 20 : undefined
+  const loadHistoryThroughTurn = useCallback(async (targetIndex?: number) => {
+    if (!storyId || !historyWindow.beforeCursor || historyLoading) return
+    setHistoryLoading(true)
+    try {
+      let cursor = historyWindow.beforeCursor
+      let turnStart = historyWindow.turnStart
+      do {
+        const page = await getInteractiveHistoryPage(storyId, branchId || snapshot?.branch_id || 'main', cursor)
+        if (historyStageRef.current !== stageKey) return
+        prependHistoryPage(page)
+        turnStart -= page.turns.length
+        if (targetIndex !== undefined && targetIndex >= turnStart) {
+          const turn = page.turns[targetIndex - turnStart]
+          if (turn) handleTurnNavigationSelect(turn.id)
+          break
+        }
+        cursor = page.before_cursor || ''
+      } while (targetIndex !== undefined && cursor)
+    } catch (error) {
+      console.error('[interactive-stage] load earlier story history failed', error)
+      setStageLiveMessages((current) => [...current, errorMessage(error instanceof Error ? error.message : t('chat.history.loadEarlierFailed'))])
+    } finally {
+      if (historyStageRef.current === stageKey) setHistoryLoading(false)
+    }
+  }, [branchId, handleTurnNavigationSelect, historyLoading, historyWindow.beforeCursor, historyWindow.turnStart, prependHistoryPage, setStageLiveMessages, snapshot?.branch_id, stageKey, storyId, t])
+  const loadEarlierMessages = useCallback(() => loadHistoryThroughTurn(), [loadHistoryThroughTurn])
+  const latestTurnID = snapshot?.current_turn?.id || snapshot?.turns?.at(-1)?.id || ''
+  const canMutateStoryView = useCallback((view: AgentMessageView) => {
+    const turnID = view.metadata.turn_id
+    return !turnID || !latestTurnID || turnID === latestTurnID
+  }, [latestTurnID])
+  const syncInputFloatHeight = useCallback(() => {
+    const element = inputFloatRef.current
+    if (!element) return
+    const nextHeight = Math.ceil(element.getBoundingClientRect().height)
+    setInputFloatHeight((current) => (current === nextHeight ? current : nextHeight))
+  }, [])
+
+  useLayoutEffect(() => {
+    // Classic scrollbars consume reading width; overlay scrollbars do not.
+    const syncScrollbarWidth = () => setScrollbarWidth(messageScroller ? messageScroller.offsetWidth - messageScroller.clientWidth : 0)
+    syncScrollbarWidth()
+    if (!messageScroller || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(syncScrollbarWidth)
+    observer.observe(messageScroller)
+    return () => observer.disconnect()
+  }, [messageScroller])
+
+  useLayoutEffect(() => {
+    syncInputFloatHeight()
+  }, [editingTurn, hotChoices.length, input, showHotChoices, stageRun.runtime.queue.length, syncInputFloatHeight])
+
+  useEffect(() => {
+    const element = inputFloatRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(syncInputFloatHeight)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [syncInputFloatHeight])
+
+  const toggleHotChoices = () => {
+    if (!canUseHotChoices) return
+    setHotChoicesExpanded((value) => !value)
+  }
+
+  useEffect(() => {
+    setHotChoicesExpanded(false)
+  }, [snapshotKey])
+
+  function clearSubmittedComposer() {
+    speech.stop()
+    setInput('')
+    setEditingTurn(null)
+    setStyleScenes([])
+    setStyleSceneQuery(null)
+    setShowSkillCommands(false)
+    setSkillCommandQuery(null)
+    setActiveSkillCommandIndex(0)
+  }
+
+  const { commandSubmitting, deleteQueuedCommand, queueActionPendingCommandID, send, steerQueuedCommand, stop, suspend, resumeTask } = useStoryStageRuntime({
+    stageKey,
+    storyId,
+    branchId,
+    input,
+    editingTurnId: editingTurn?.id,
+    styleScenes,
+    streaming,
+    branchTerminal,
+    blocked: !approvalReady || (streaming && !supportsRuntimeOperation(conversationConfig.snapshot, 'queue')),
+    stageRun,
+    liveTurnNavigationAnchorId,
+    t,
+    interactiveAgentCommands,
+    liveAccumulator,
+    storyImages,
+    readStageRuntime,
+    setStageRuntime,
+    updateStageRun,
+    setStreaming: setStageStreaming,
+    setActivity: setStageActivityContent,
+    setMessages: setStageLiveMessages,
+    clearComposer: clearSubmittedComposer,
+    onTurnPersisted: (event, options) => {
+      speech.onPersisted(event, options)
+      return onTurnPersisted(event, options)
+    },
+    onDone,
+  })
+
+  useEffect(() => {
+    if (!pendingOpeningStoryId || pendingOpeningStoryId !== storyId) return
+    if (snapshot?.story_id !== storyId || snapshotLoading || streaming || !approvalReady) return
+    if ((snapshot.turn_count || 0) > 0 || agentMessages.length > 0) {
+      setPendingOpeningStoryId('')
+      return
+    }
+    void send({ startOpening: true }).then((started) => {
+      if (!started) console.warn('[story-setup] Story was created but opening generation did not start', { storyId })
+      setPendingOpeningStoryId('')
+    })
+  }, [agentMessages.length, approvalReady, pendingOpeningStoryId, send, snapshot?.story_id, snapshot?.turn_count, snapshotLoading, storyId, streaming])
+
+  const analyzeCurrentContext = async (rawMessage: string) => {
+    const message = rawMessage.trim()
+    if (!message || !storyId || streaming) return
+    const inlineStyleScenes = parseInlineStyleScenes(message)
+    const mergedStyleScenes = Array.from(new Set([...styleScenes, ...inlineStyleScenes]))
+    setContextAnalysisLoading(true)
+    setContextAnalysisError(null)
+    setContextAnalysis(null)
+    try {
+      setContextAnalysis(await analyzeInteractiveContext({
+        mode: 'story',
+        story_id: storyId,
+        branch: branchId,
+        message,
+        style_scenes: mergedStyleScenes,
+      }))
+    } catch (e) {
+      setContextAnalysis(null)
+      setContextAnalysisError((e as Error).message)
+    } finally {
+      setContextAnalysisLoading(false)
+    }
+  }
+
+  const openContextAnalysis = () => {
+    setContextAnalysisOpen(true)
+    void analyzeCurrentContext(CONTEXT_ANALYSIS_SIMULATED_MESSAGE)
+  }
+
+  const removeContextCompaction = async () => {
+    await removeInteractiveContextCompaction(storyId, branchId)
+    await onDone()
+    await analyzeCurrentContext(CONTEXT_ANALYSIS_SIMULATED_MESSAGE)
+  }
+
+  const switchMessageVersion = async (view: AgentMessageView, direction: -1 | 1) => {
+    const turnId = view.metadata.turn_id
+    if (!turnId || !storyId || streaming || switchingVersionTurnId) return
+    const versions = view.metadata.turn_versions || []
+    const currentIndex = view.metadata.turn_version_index ?? versions.findIndex((version) => version.current)
+    const nextVersion = versions[currentIndex + direction]
+    if (!nextVersion) return
+    speech.stop()
+    setSwitchingVersionTurnId(turnId)
+    setStageActivityContent(direction > 0 ? t('storyStage.activity.switchNewer') : t('storyStage.activity.switchOlder'))
+    try {
+      await switchInteractiveTurnVersion(storyId, {
+        branch_id: branchId,
+        turn_id: turnId,
+        version_turn_id: nextVersion.turn_id,
+      })
+      clearStoryStageRun(stageKey)
+      await onDone()
+    } catch (error) {
+      setStageLiveMessages((prev) => [
+        ...prev,
+        errorMessage(error instanceof Error ? error.message : t('storyStage.activity.switchFailed')),
+      ])
+    } finally {
+      setSwitchingVersionTurnId(null)
+      setStageActivityContent('')
+    }
+  }
+
+  const startEditingView = (view: AgentMessageView) => {
+    const turnId = view.metadata.turn_id
+    if (!turnId || streaming) return
+    const content = agentViewContent(view)
+    setEditingTurn({ id: turnId, content })
+    setInput(content)
+    setShowSkillCommands(false)
+    setActiveSkillCommandIndex(0)
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(content.length, content.length)
+    })
+  }
+
+  const startEditingAssistantReply = (view: AgentMessageView) => {
+    if (streaming || storyImages.generatingTurnId || switchingVersionTurnId) return
+    const turnId = view.metadata.turn_id
+    if (!turnId) return
+    const turn = turnsById.get(turnId)
+    if (!turn) return
+    speech.stop()
+    setReplyEditTarget({
+      turnId: turn.id,
+      branchId: turn.branch_id || branchId,
+      initialContent: sanitizeStoredNarrative(turn.narrative),
+      expectedNarrative: turn.narrative,
+    })
+  }
+
+  const startCreatingBranchFromView = (view: AgentMessageView) => {
+    const turnId = view.metadata.turn_id
+    if (!turnId || !onRequestCreateBranch) return
+    const turn = turnsById.get(turnId)
+    onRequestCreateBranch(turn
+      ? branchCreationSourceFromTurn(turn, t('branchTimeline.nodeFallback'))
+      : branchCreationSourceFromMessage(turnId, agentViewContent(view), t('branchTimeline.nodeFallback')))
+  }
+
+  const regenerateView = (view: AgentMessageView) => {
+    if (streaming) return
+    const turnId = view.metadata.turn_id
+    if (!turnId) {
+      if (stageRun.runtime.phase === 'suspended') {
+        // Retry resumes the original operation, including its regeneration target.
+        void resumeTask()
+        return
+      }
+      const liveUserMessage = [...liveMessages].reverse().find((item) => item.role === 'user')
+      const source = stageRun.retryMessage || (liveUserMessage ? agentMessageDisplayText(liveUserMessage) : '')
+      if (source.trim()) void send({ message: source, rewindTurnId: stageRun.rewindTurnId })
+      return
+    }
+    const source = turnsById.get(turnId)?.user || agentViewContent(view)
+    void send({ message: source, rewindTurnId: turnId })
+  }
+
+  const switchViewVersion = (view: AgentMessageView, direction: -1 | 1) => {
+    void switchMessageVersion(view, direction)
+  }
+
+  const generateImageForView = (view: AgentMessageView) => {
+    void storyImages.generateForTurn(view.metadata.turn_id || '', 'manual', true)
+  }
+
+  const cancelEditing = () => {
+    setEditingTurn(null)
+    setInput('')
+    setStyleSceneQuery(null)
+    setShowSkillCommands(false)
+    setSkillCommandQuery(null)
+    setActiveSkillCommandIndex(0)
+  }
+
+  const handleInputChange = (nextValue: string) => {
+    setInput(nextValue)
+  }
+
+  const handleInputTriggerChange = (trigger: ComposerTrigger | null) => {
+    if (trigger?.kind === 'slash') {
+      setSkillCommandQuery(trigger.query)
+      setShowSkillCommands(true)
+      setActiveSkillCommandIndex(0)
+    } else {
+      setSkillCommandQuery(null)
+      setShowSkillCommands(false)
+      setActiveSkillCommandIndex(0)
+    }
+    setStyleSceneQuery(trigger?.kind === 'style' ? trigger.query : null)
+  }
+
+  const selectSkillCommand = (name: string) => {
+    const command = filteredSkillCommands.find((item) => item.name === name)
+    if (command?.builtIn) {
+      inputRef.current?.replaceActiveTriggerText(`/${name} `)
+    } else {
+      inputRef.current?.replaceActiveTriggerWithToken({ kind: 'skill', value: name, label: name })
+    }
+    setShowSkillCommands(false)
+    setSkillCommandQuery(null)
+    setActiveSkillCommandIndex(0)
+    inputRef.current?.focus()
+  }
+
+  const selectStyleScene = (scene: string) => {
+    inputRef.current?.replaceActiveTriggerWithToken({ kind: 'style', value: scene, label: scene })
+    setStyleScenes((current) => Array.from(new Set([...current, scene])))
+    setStyleSceneQuery(null)
+    inputRef.current?.focus()
+  }
+
+  const removeStyleScene = (scene: string) => {
+    setStyleScenes((current) => current.filter((item) => item !== scene))
+  }
+
+  const handleTokenRemove = (token: ComposerTokenSpec) => {
+    if (token.kind === 'style' && styleScenes.includes(token.value)) removeStyleScene(token.value)
+  }
+
+  const selectHotChoice = (choice: string) => {
+    setInput(choice)
+    setShowSkillCommands(false)
+    setSkillCommandQuery(null)
+    setActiveSkillCommandIndex(0)
+    setHotChoicesExpanded(false)
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(choice.length, choice.length)
+    })
+  }
+
+  const saveEditedReply = async (narrative: string) => {
+    if (!replyEditTarget) return
+    await updateInteractiveTurnNarrative(storyId, replyEditTarget.turnId, {
+      branch_id: replyEditTarget.branchId,
+      narrative,
+      expected_narrative: replyEditTarget.expectedNarrative,
+    })
+    await onDone({ silent: true })
+  }
+
+  const waitingToStartOpening = Boolean(pendingOpeningStoryId) && pendingOpeningStoryId === storyId
+  const committedTurnCount = Math.max(story?.turn_count || 0, snapshot?.turn_count || 0, snapshot?.turns?.length || 0)
+  const openingRuntimeActive = streaming
+    || Boolean(stageRun.runtime.operationId)
+    || Boolean(stageRun.runtime.pendingInterruptionId)
+    || stageRun.runtime.recoveryPaused
+    || stageRun.runtime.queue.length > 0
+    || Boolean(stageRun.retryMessage)
+    || liveMessages.length > 0
+  const storySetupVisible = creatingStory || (
+    !waitingToStartOpening
+    && !snapshotLoading
+    && committedTurnCount === 0
+    && !openingRuntimeActive
+  )
+
+  const presentationTurn = streaming ? snapshot?.current_turn : turnsById.get(activeTurnAnchorId) ?? displaySnapshot?.current_turn
+  const presentation = visibleStoryPresentation(presentationTurn?.turn_result?.presentation, story?.presentation_settings)
+  const hasStageArtwork = !storySetupVisible && Boolean(presentation.background || presentation.characters?.length)
+  useEffect(() => { if (!hasStageArtwork) setTextHidden(false) }, [hasStageArtwork])
+  const presentationTurnIndex = displaySnapshot?.turns.findIndex(turn => turn.id === presentationTurn?.id) ?? -1
+  const previousPresentationTurnId = presentationTurnIndex > 0 ? displaySnapshot?.turns[presentationTurnIndex - 1]?.id : undefined
+  const artworkOnly = textHidden && hasStageArtwork
+  const stageControls = (
+    <>
+
+    <StoryStageControls
+      isMobile={isMobile}
+      picker={gameStories?.picker ?? {
+        stories, currentStoryId: storyId,
+        onSelect: (id) => { setCreatingStory(false); setPendingOpeningStoryId(''); onStorySelect(id) },
+        onCreate: () => { setPendingOpeningStoryId(''); setCreatingStory(true) },
+        onDeleteStories: onStoryDelete, onRenameStory: onStoryRename,
+      }}
+      history={{ items: turnNavigationItems, activeAnchorId: activeTurnAnchorId, onSelect: handleTurnNavigationSelect, earlierCount: displaySnapshot?.turn_start || 0, loadingEarlier: historyLoading, onSelectEarlier: loadHistoryThroughTurn }}
+      directorPanelVisible={directorPanelVisible}
+      onToggleDirectorPanel={onToggleDirectorPanel}
+    />
+    {hasStageArtwork && <Button type="button" variant="ghost" size="icon-sm" aria-label={t(artworkOnly ? 'storyStage.presentation.showText' : 'storyStage.presentation.hideText')} title={t(artworkOnly ? 'storyStage.presentation.showText' : 'storyStage.presentation.hideText')} aria-pressed={artworkOnly} onClick={() => setTextHidden(!artworkOnly)}>
+      {artworkOnly ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+    </Button>}
+    {artworkOnly && streaming && <Button type="button" variant="ghost" size="icon-sm" aria-label={t('chat.runtime.abort')} disabled={commandSubmitting || stageRun.runtime.abortPending} onClick={() => void stop()}><Square className="size-4" /></Button>}
+    </>
+  )
+
+  return (
+    <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--nova-surface-2)]" style={{ '--nova-story-text-max-width': `${stagePreferences.textMaxWidth}px`, '--nova-story-scrollbar-width': `${scrollbarWidth}px` } as CSSProperties}>
+      {!storySetupVisible && <StoryStageArtwork key={`${projectId}:${stageKey}`} previousTurnId={previousPresentationTurnId} projectId={projectId} turn={presentationTurn} latest={historyWindow.followLatest && presentationTurn?.id === snapshot?.current_turn?.id} settings={story?.presentation_settings} textHidden={artworkOnly} scrimOpacity={stagePreferences.scrimOpacity} characterLayout={stagePreferences.characterLayout} characterSize={stagePreferences.characterSize} />}
+      <div data-testid="story-stage-card" className="nova-story-stage-card relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <StoryStageHeader isMobile={isMobile} controls={stageControls} />
+        <div className="nova-story-speech-playback shrink-0 px-3" style={{ visibility: artworkOnly ? 'hidden' : undefined }} inert={artworkOnly}><SpeechPlayback owner={stageKey} /></div>
+
+        <div className="nova-story-stage-content flex min-h-0 flex-1 overflow-hidden" data-setup={storySetupVisible || undefined} data-artwork={hasStageArtwork ? 'true' : undefined} style={{ visibility: artworkOnly ? 'hidden' : undefined }} inert={artworkOnly} aria-hidden={artworkOnly || undefined}>
+          {!isMobile && <TurnNavigator items={turnNavigationItems} activeAnchorId={activeTurnAnchorId} onSelect={handleTurnNavigationSelect} earlierCount={displaySnapshot?.turn_start || 0} loadingEarlier={historyLoading} onSelectEarlier={loadHistoryThroughTurn} />}
+          <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {historyWindow.stageKey === stageKey && !historyWindow.followLatest ? (
+              <Button type="button" variant="secondary" size="sm" className="absolute right-4 top-3 z-30 shadow-md lg:top-12" onClick={resetHistoryToLatest}>
+                {t('storyStage.history.backToLatest')}
+              </Button>
+            ) : null}
+            {storySetupVisible ? (
+              <GameStorySetup enabled={creatingStory || !story || (story.title_source === 'pending' && committedTurnCount === 0 && !openingRuntimeActive)}>
+              <NewStorySetupPanel
+                key={creatingStory ? 'new-story' : story?.id || 'new-story'}
+                projectId={projectId}
+                tellers={tellers}
+				planningTemplates={planningTemplates}
+                imagePresets={imagePresets}
+                loreItems={loreItems}
+                bookOpeningPresets={bookOpeningPresets}
+                recentNarrativeStyleID={recentNarrativeStyleID}
+                narrativeStyleLoading={narrativeStyleLoading}
+                conversationConfig={conversationConfig}
+                story={creatingStory ? undefined : story}
+                onRequestLoreInit={onRequestLoreInit}
+                onOpenPresets={onOpenDirectorConfig}
+                onCancel={() => setCreatingStory(false)}
+                onCreate={async (input) => {
+                  if (story && !creatingStory) {
+                    await onStorySetupUpdate(input)
+                    const runtimeChanges: ConversationConfigChanges = {}
+                    if (conversationConfig.snapshot?.profile_id !== input.profile_id) runtimeChanges.profile_id = input.profile_id
+                    if (conversationConfig.snapshot?.thinking_level !== input.thinking_level) runtimeChanges.thinking_level = input.thinking_level
+                    if (Object.keys(runtimeChanges).length > 0) {
+                      const saved = await conversationConfig.patch(runtimeChanges)
+                      if (!saved) throw new Error(t('storyPicker.setup.model.saveFailed'))
+                    }
+                    const started = await send({ startOpening: true })
+                    if (!started) throw new Error(t('storyPicker.setup.startFailed'))
+                  } else {
+                    const created = await onStoryCreate(input)
+                    if (!created?.id) throw new Error(t('storyPicker.setup.startFailed'))
+                    setPendingOpeningStoryId(created.id)
+                  }
+                  setCreatingStory(false)
+                }}
+              />
+              </GameStorySetup>
+            ) : (snapshotLoading || waitingToStartOpening) && agentMessages.length === 0 && !streaming ? (
+              <LoadingState
+                label={t('common.loading')}
+                layout="conversation"
+                className="h-full min-h-0 flex-1 bg-[var(--nova-surface-2)]"
+              />
+            ) : (
+              <MessageList
+                projectId={projectId}
+                attachmentScope={storyId ? { kind: 'story', id: storyId } : undefined}
+                messages={agentMessages}
+                onResolveAsk={async (view, action) => {
+                  const askID = agentViewAskID(view)
+                  const result = await resolveInteractiveAsk(storyId, branchId, askID, action)
+                  const previous = agentViewAskInteraction(view)
+                  if (previous && result.status !== 'pending') {
+                    setStageLiveMessages(current => [...current, createAgentDataMessage({ id: `ask-${askID}`, type: 'agent-ask', data: { ...previous, ...result } })])
+                  }
+                  interactiveAgentCommands.project(await getActiveInteractiveChat(storyId, branchId))
+                  return result
+                }}
+                isStreaming={streaming}
+                activityContent={stageRun.runtime.recoveryPaused ? t('storyStage.activity.recoveryPaused') : activityContent}
+                highlightDialogue
+                contentClassName="nova-story-reading-column"
+                onScrollerChange={setMessageScroller}
+                scrollResetKey={scrollResetKey}
+                bottomPaddingClassName="pb-36"
+                bottomPaddingPx={messageListBottomPadding}
+                hasEarlierMessages={historyWindow.stageKey === stageKey && historyWindow.hasMore}
+                isLoadingEarlierMessages={historyLoading}
+                onLoadEarlierMessages={loadEarlierMessages}
+                autoLoadEarlierMessages
+                onLoadExecutionDetails={loadExecutionDetails}
+                afterContent={historyWindow.followLatest && !streaming && storyStateModel.hasState && stateDisplayPreference !== 'director-only' ? (
+                  <StoryStateLedger
+                    snapshot={snapshot}
+                    actorLore={{
+                      projectId,
+                      items: loreItems,
+                      protagonist: story?.protagonist,
+                      onOpenItem: navigation ? (id) => navigation.open({ kind: 'lore_item', id }) : undefined,
+                    }}
+                    displayPreference={stateDisplayPreference}
+                    onDisplayPreferenceChange={onStateDisplayPreferenceChange}
+                    detailsAction={
+                      <StateDetailsDialog projectId={projectId} loreItems={loreItems} protagonist={story?.protagonist} snapshot={snapshot} trigger={
+                        <Button type="button" variant="ghost" size="sm" aria-label={t('storyStage.state.viewAll')}>
+                          <Maximize2 data-icon="inline-start" />
+                          <span className="story-state-ledger__details-label">{t('storyStage.state.viewAll')}</span>
+                        </Button>
+                      } />
+                    }
+                  />
+                ) : undefined}
+                afterContentKey={snapshot?.current_turn?.id || ''}
+                messageStyle={stageTextStyle}
+                collapseTraceGroups
+                turnScrollRequest={turnScrollRequest}
+                onVisibleTurnAnchorChange={handleVisibleTurnAnchorChange}
+                canMutateMessage={canMutateStoryView}
+                onEditMessage={startEditingView}
+                onEditAssistantReply={storyImages.generatingTurnId || switchingVersionTurnId ? undefined : startEditingAssistantReply}
+                onCreateBranch={onRequestCreateBranch ? startCreatingBranchFromView : undefined}
+                onRegenerateMessage={regenerateView}
+                onSwitchMessageVersion={switchViewVersion}
+                onReadAloud={speech.configured ? (view) => {
+                  const turn = turnsById.get(view.metadata.turn_id || '')
+                  if (turn) speech.read(turn)
+                } : undefined}
+                onGenerateInteractiveImage={imageConfigured ? generateImageForView : undefined}
+                generatingInteractiveImageTurnId={storyImages.generatingTurnId || undefined}
+                onOpenSubAgentSession={openSubAgentSession}
+                activeRunId={stageRun.runtime.operationId}
+                activeSubAgentSessionKey={activeSubAgentSessionKey}
+              />
+            )}
+            {activeSubAgentSessionKey && (
+              <div className="absolute inset-y-0 right-0 z-30 w-[min(420px,92vw)] border-l border-[var(--nova-border)] shadow-[var(--nova-shadow)]">
+                <AgentSubAgentSessionPanel
+                  projectId={projectId}
+                  messages={agentMessages}
+                  sessionKey={activeSubAgentSessionKey}
+                  onClose={() => setActiveSubAgentSessionKey('')}
+                  highlightDialogue
+                  messageStyle={stageTextStyle}
+                />
+              </div>
+            )}
+            <StoryStageComposer
+              taskControls={<AgentTaskControls suspended={stageRun.runtime.phase === 'suspended'} pending={commandSubmitting || stageRun.runtime.abortPending} onResume={() => void resumeTask()} onAbort={() => void stop()} />}
+              layout={{ projectId, creatingStory: storySetupVisible || (waitingToStartOpening && (!isMobile || !streaming)), isMobile, inputTextStyle, workspace, inputFloatRef, inputRef, t, attachmentDraftKey: stageKey }}
+              editor={{ input, editingTurn, styleScenes, styleSceneQuery, styleSceneSuggestions, showSkillCommands, activeSkillCommandIndex, skillCommands, filteredSkillCommands, filteredBuiltInCommandItems, filteredSkillCommandItems, setStyleSceneQuery, setShowSkillCommands, setSkillCommandQuery, setActiveSkillCommandIndex }}
+              story={{ storyId, branchTerminal, hotChoices, showHotChoices, canUseHotChoices }}
+              runtime={{ streaming, approvalReady, conversationConfig, abortPending: stageRun.runtime.abortPending, recoveryPaused: stageRun.runtime.recoveryPaused, recoveryAbortAvailable: stageRun.runtime.recoveryAbortAvailable, pendingInterruptionId: stageRun.runtime.pendingInterruptionId, operationId: stageRun.runtime.operationId, connection: stageRun.runtime.connection, commandSubmitting, queue: stageRun.runtime.queue, queueActionPendingCommandID }}
+              dialogs={{ contextAnalysisOpen, contextAnalysisLoading, contextAnalysisError, contextAnalysis, tokenUsageOpen, tokenUsageMessages, replyEditTarget, setContextAnalysisOpen, setTokenUsageOpen, closeReplyEditor: () => setReplyEditTarget(null), saveReply: saveEditedReply }}
+              actions={{ cancelEditing, selectHotChoice, selectStyleScene, selectSkillCommand, handleInputChange, handleInputTriggerChange, handleTokenRemove, toggleHotChoices, openContextAnalysis, removeContextCompaction, send, steerQueuedCommand, deleteQueuedCommand, stop: stageRun.runtime.recoveryPaused || stageRun.runtime.connection !== 'connected' || !supportsRuntimeOperation(conversationConfig.snapshot, 'pause') ? stop : suspend }}
+            />
+          </section>
+        </div>
+      </div>
+    </main>
+  )
+
+}
+function noop() {}
+function noopStateDisplayPreferenceChange(_value: StoryStateDisplayPreference) {}
+
+function noopTurnPersisted() {
+  return undefined
+}
+
+function errorMessage(content: string) {
+  return createAgentDataMessage({ type: 'agent-error', data: { role: 'error', content } })
+}

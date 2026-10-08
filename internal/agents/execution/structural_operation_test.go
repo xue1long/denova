@@ -1,0 +1,27 @@
+package execution
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	agentstructural "denova/internal/agents/context/structural"
+
+	agentschema "github.com/alfredxw/denova/agent/schema"
+)
+
+func TestStructuralOperationRejectsInvalidPublicRequestBeforeOpeningSession(t *testing.T) {
+	t.Parallel()
+
+	backend := new(publicBackend)
+	for _, spec := range []agentstructural.Spec{
+		{Action: agentstructural.Compact},
+		{Action: agentstructural.Compact, CommandID: strings.Repeat("x", 4<<10+1)},
+		{Action: agentstructural.Action("future-action"), CommandID: "unsupported-structural-action"},
+	} {
+		if _, err := backend.executeStructural(context.Background(), Cycle{}, spec); !errors.Is(err, agentschema.ErrInvalidInput) {
+			t.Fatalf("executeStructural(%#v) error = %v, want ErrInvalidInput", spec, err)
+		}
+	}
+}
