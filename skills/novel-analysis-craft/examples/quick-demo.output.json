@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "work": {
     "title": "钟响三次",
     "author": "原创示例",
@@ -22,6 +22,26 @@
     "last_processed_chapter_id": "ch03",
     "scope_note": "已处理此示例声明的全部章节；这不代表其他版本或更长作品。"
   },
+  "source_chunks": [
+    {
+      "chunk_id": "c01",
+      "chapter_id": "ch01",
+      "sha256": "12c58c249166c6980e0d16c0f18d4acc5e5ecfda09e8969dfaebfc6db55a2296",
+      "source_ref": "examples/quick-demo.input.json"
+    },
+    {
+      "chunk_id": "c02",
+      "chapter_id": "ch02",
+      "sha256": "6ce93c73e09534debd00b6d56bb4d461140d0db699a379709c2a72239ea6d800",
+      "source_ref": "examples/quick-demo.input.json"
+    },
+    {
+      "chunk_id": "c03",
+      "chapter_id": "ch03",
+      "sha256": "79b91e1cb1a9d7c35917721a30fe6196eec42f0ef560b750d0f7b757b77ccf5a",
+      "source_ref": "examples/quick-demo.input.json"
+    }
+  ],
   "evidence": [
     {
       "evidence_id": "E001",

@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:novel-analysis-craft:output:1.0",
+  "$id": "urn:novel-analysis-craft:output:1.1",
   "title": "Novel Analysis Output and Checkpoint",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "work", "run", "coverage", "evidence", "stages",
+    "schema_version", "work", "run", "coverage", "source_chunks", "evidence", "stages",
     "claims", "technique_cards", "sops", "correction_log", "quality_review"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "work": {
       "type": "object",
       "additionalProperties": false,
@@ -17,7 +17,7 @@
       "properties": {
         "title": { "type": "string", "minLength": 1 },
         "author": { "type": ["string", "null"] },
-        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes"] },
+        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes", "title_only"] },
         "scope_note": { "type": "string" }
       }
     },
@@ -49,6 +49,20 @@
         "completeness": { "enum": ["complete", "partial", "unknown"] },
         "last_processed_chapter_id": { "type": ["string", "null"] },
         "scope_note": { "type": "string" }
+      }
+    },
+    "source_chunks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["chunk_id", "chapter_id", "sha256"],
+        "properties": {
+          "chunk_id": { "type": "string", "minLength": 1 },
+          "chapter_id": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "source_ref": { "type": "string" }
+        }
       }
     },
     "evidence": {
@@ -89,10 +103,11 @@
                     "required": ["beat_id", "event", "causal_link", "consequence", "evidence_refs"],
                     "properties": {
                       "beat_id": { "type": "string" },
+                      "chapter_id": { "type": "string" },
                       "event": { "type": "string" },
                       "causal_link": { "type": "string" },
                       "consequence": { "type": "string" },
-                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
                     }
                   }
                 },
@@ -134,7 +149,7 @@
                       "characters": { "$ref": "#/$defs/stringArray" },
                       "function": { "type": "string" },
                       "deletion_test": { "type": "string" },
-                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
                     }
                   }
                 },
@@ -151,7 +166,7 @@
                       "weakness_or_belief": { "type": "string" },
                       "pressure_pattern": { "type": "string" },
                       "arc": { "type": "string" },
-                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
                     }
                   }
                 }
@@ -176,7 +191,7 @@
                       "proposition": { "type": "string" },
                       "expression": { "type": "string" },
                       "choice_or_cost": { "type": "string" },
-                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
                     }
                   }
                 },
@@ -191,7 +206,7 @@
                       "to_state": { "type": "string" },
                       "turn_event": { "type": "string" },
                       "plot_function": { "type": "string" },
-                      "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+                      "evidence_refs": { "$ref": "#/$defs/stringArray" }
                     }
                   }
                 },
@@ -271,7 +286,7 @@
           "kind": { "enum": ["observation", "inference", "evaluation"] },
           "statement": { "type": "string", "minLength": 1 },
           "confidence": { "enum": ["high", "medium", "low"] },
-          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+          "evidence_refs": { "$ref": "#/$defs/stringArray" }
         }
       }
     },
@@ -296,7 +311,7 @@
           "conditions": { "type": "string" },
           "adaptation": { "type": "string" },
           "pitfalls": { "type": "string" },
-          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" },
+          "evidence_refs": { "$ref": "#/$defs/stringArray" },
           "confidence": { "enum": ["high", "medium", "low"] },
           "sop_id": { "type": ["string", "null"] }
         }
@@ -332,7 +347,7 @@
           "reason": { "type": "string" },
           "previous_statement": { "type": "string" },
           "revised_statement": { "type": "string" },
-          "evidence_refs": { "$ref": "#/$defs/nonEmptyStringArray" }
+          "evidence_refs": { "$ref": "#/$defs/stringArray" }
         }
       }
     },

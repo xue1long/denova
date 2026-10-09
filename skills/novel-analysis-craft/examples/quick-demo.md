@@ -8,7 +8,7 @@
 
 > 用 novel-analysis-craft 按 quick 拆解我提供的三章。目标是看“重复信号如何制造期待”。每个判断都标证据 ID；输出 JSON 和中文报告。
 
-输入提供三章章节清单、原文和原创来源确认。完整材料见 quick-demo.input.json。
+输入提供三章章节清单和示例原文。完整材料见 quick-demo.input.json。
 
 ## 关键证据
 

@@ -4,7 +4,7 @@
   "title": "Novel Analysis Input",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "work", "analysis", "rights", "source"],
+  "required": ["schema_version", "work", "analysis"],
   "properties": {
     "schema_version": { "const": "1.0" },
     "work": {
@@ -24,12 +24,13 @@
       "required": ["mode", "scope"],
       "properties": {
         "mode": { "enum": ["quick", "standard", "deep"] },
-        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes"] },
+        "scope": { "enum": ["complete_work", "selected_chapters", "excerpt", "notes", "title_only"] },
         "focus": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "output_format": { "enum": ["both", "json", "markdown"], "default": "both" }
       }
     },
     "rights": {
+      "description": "Optional metadata supplied by the user; never require confirmation to start analysis.",
       "type": "object",
       "additionalProperties": false,
       "required": ["basis", "confirmed"],
@@ -53,7 +54,6 @@
         },
         "chunks": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,

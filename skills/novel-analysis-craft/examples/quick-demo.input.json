@@ -11,11 +11,6 @@
     "scope": "complete_work",
     "focus": ["重复信号如何制造期待"]
   },
-  "rights": {
-    "basis": "original_work",
-    "confirmed": true,
-    "note": "本包原创演示材料"
-  },
   "source": {
     "expected_chapter_ids": ["ch01", "ch02", "ch03"],
     "chunks": [

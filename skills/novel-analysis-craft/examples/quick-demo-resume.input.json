@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "work": {
+    "title": "钟响三次",
+    "author": "原创示例",
+    "genre": "现实主义/微奇幻",
+    "language": "zh-CN"
+  },
+  "analysis": {
+    "mode": "quick",
+    "scope": "selected_chapters",
+    "focus": [
+      "重复信号如何制造期待"
+    ]
+  },
+  "source": {
+    "expected_chapter_ids": [
+      "ch01",
+      "ch02",
+      "ch03",
+      "ch04"
+    ],
+    "chunks": [
+      {
+        "chunk_id": "c04",
+        "chapter_id": "ch04",
+        "title": "续租",
+        "locator": "第4章",
+        "content_type": "provided_text",
+        "content": "印书日结束，邻居交来的订书款和义卖收入合计三万元。林澄付清欠款，房东确认续租。她把旧印刷机留在门口，邀请邻居下周再来印书。",
+        "source_note": "原创续篇示例"
+      }
+    ],
+    "source_note": "新批次仅包含 ch04；前一批 checkpoint 见 examples/quick-demo.output.json。"
+  }
+}
