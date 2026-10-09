@@ -72,4 +72,4 @@
 - 未解决问题：
 - 更正记录：
 - 下一批建议：
-- JSON checkpoint：按 schemas/output.schema.json 输出。
+- JSON checkpoint：按 `skill://novel-analysis-craft/references/schemas/output.schema.json` 输出。

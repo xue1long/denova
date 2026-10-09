@@ -11,4 +11,4 @@
 
 总结 1–2 个优点和不足。没有可见依据时标为低置信度评价；不把未知结局写成已核对事实。
 
-使用 references/analysis-methods.md 与 references/quality-gates.md。必要时记录竞争性解释和置信度，并以稳定 ID 保存结果。
+使用 `skill://novel-analysis-craft/references/analysis-methods.md` 与 `skill://novel-analysis-craft/references/quality-gates.md`。必要时记录竞争性解释和置信度，并以稳定 ID 保存结果。

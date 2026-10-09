@@ -1,18 +1,17 @@
 # 小说拆解与写作技巧提炼 Skill
 
-这是一个可独立安装的 AI Skill。它把小说拆解流程变成带证据、能分批续跑的工作流：
+这是一个可独立安装的 AI Skill，支持 Denova 书籍设定补全、章节组细纲和带证据的小说拆解。拆解流程可分批续跑：
 
 **骨架 → 血肉 → 灵魂 → 技巧卡片 → 写作 SOP 与创作练习**
 
 ## 文件结构
 
 - SKILL.md：触发条件、运行步骤、深度模式和最终输出要求。
-- prompts/：每个阶段可直接使用的提示词，以及续跑/收尾提示词。
-- references/：证据与不确定性、分析方法、阶段质量门槛。
-- schemas/：输入与输出 JSON Schema。
-- templates/：Markdown 输入、报告和技巧卡模板。
+- references/：Denova 可读取的书籍设定补全流程与文件模板、章节组模板、分析提示词、JSON Schema、Markdown 模板和质量规则。
 - examples/：原创微型故事的输入与完整示例输出。
 - scripts/validate_output.py：仅使用 Python 标准库，检查核心必需字段、章节覆盖、来源批次和证据引用。
+
+Denova 的技能阅读工具可加载 `references/` 下的文件；`examples/` 与 `scripts/` 供能够访问本地 Skill 目录的环境使用。
 
 ## 安装
 
@@ -21,9 +20,15 @@
 - Windows：%USERPROFILE%\.codex\skills\novel-analysis-craft\
 - 通用 Agent 目录：~/.agents/skills/novel-analysis-craft/
 
-也可以把文件夹交给支持 SKILL.md 的 Agent 手动加载。此交付包是独立目录；生成它没有修改用户项目或已安装的 Skill。
+也可以把文件夹交给支持 SKILL.md 的 Agent 手动加载。
 
 ## 使用
+
+在 Denova 的书籍项目中说“补全书籍设定”，Skill 会先检查现有章节、设定文件和 Lore，再按 `references/book-setting-templates.md` 补齐有材料支持的缺失文件或空白栏目；已有的有效内容和等价栏目会保留。完成后会列出实际修改、未能确认的事项及已核对的章节范围。长篇分批处理时会记录覆盖范围，不会把抽样结果说成全书完成。
+
+说“生成/补全章节组细纲”时会使用 `references/chapter-group-outline-template.md`，按实际章节和项目设定填写。
+
+以下是小说拆解流程：
 
 提供书名即可开始探索性拆解；有原文、笔记或章节摘要时可进一步核对细节。可直接这样说：
 

@@ -1,23 +1,39 @@
 ---
-name: "novel-analysis-craft"
-description: "Use this skill whenever the user wants to systematically analyze or dissect a novel, story, or book; map plot structure, causality, characters, subplots, themes, or emotional turns; extract writing techniques into reusable cards or a writing SOP; analyze a long work in chapter batches and resume later; or design and assess a practice exercise. 当用户要求小说拆解、提取写作技巧、分章节续拆、生成技巧卡或评估练习时也要使用。Distinguish source-backed claims from tentative interpretations and report coverage honestly."
-category: "general"
+name: novel-analysis-craft
+description: "Use this skill to systematically analyze a novel's plot, causality, characters, subplots, themes, and emotional turns; extract writing techniques and practice exercises; resume chapter-batch analysis; complete missing book-setting files in a Denova project; or generate and complete chapter-group outlines. Trigger on 补全书籍设定、检查项目缺失设定、完善书籍资料、小说拆解、分章节续拆、章节组细纲、技巧卡 or 写作练习. Distinguish source-backed facts from tentative interpretations and report coverage honestly."
+category: general
 ---
 
 # Novel Analysis and Craft Extraction
 
-Turn supplied novel material into a traceable analysis and a small set of usable writing tools. Follow the sequence **skeleton → flesh → soul → technique extraction → practice**. The goal is to understand how the work functions and convert observations into original craft choices, not to reproduce the author's prose.
+Choose the matching workflow first: book-setting backfill, chapter-group outline, or novel analysis. If the user requests more than one, run each relevant workflow. The analysis workflow follows **skeleton → flesh → soul → technique extraction → practice** and turns observations into original craft choices.
 
 默认使用中文回复，除非用户指定其他语言。
 
-## Read the supporting files
+## Choose supporting files by workflow
 
-- For each run, use references/evidence-and-coverage.md and references/quality-gates.md.
-- Use references/analysis-methods.md for the interpretation framework.
-- Use the matching prompt in prompts/ for each phase. For a resumed run, use prompts/06-resume-and-finalize.md.
-- Use schemas/input.schema.json and schemas/output.schema.json for machine-readable input and output.
-- Use templates/input.md, templates/output.md, and templates/technique-card.md when the user prefers Markdown.
-- examples/quick-demo.* shows a complete small example; examples/quick-demo-resume.* shows a same-work continuation. scripts/validate_output.py checks core structure, coverage, source chunks, and evidence links without third-party packages.
+- For book-setting backfill, read `skill://novel-analysis-craft/references/book-setting-backfill.md` and `skill://novel-analysis-craft/references/book-setting-templates.md`. This workflow edits the active book workspace; its deliverable is updated setting files and a coverage report.
+- For a chapter-group outline, read `skill://novel-analysis-craft/references/chapter-group-outline-template.md`.
+- For novel analysis, read the relevant files under `skill://novel-analysis-craft/references/`: `evidence-and-coverage.md`, `quality-gates.md`, `analysis-methods.md`, the matching `prompts/00–06` file, `schemas/input.schema.json` and `schemas/output.schema.json` for JSON, and `templates/input.md`, `templates/output.md`, and `templates/technique-card.md` for Markdown. The bundled `examples/` and `scripts/` directories are optional local assets when the runtime can access the installed Skill directory.
+
+## Book-setting backfill
+
+Trigger this workflow when the user asks to 补全书籍设定、检查并补齐项目书籍文件、完善书籍资料, or equivalent. This request authorizes filling missing project material. Read both book-setting references listed above and inspect the active book workspace before writing. Preserve meaningful existing content, use actual chapters as the strongest evidence, and fill only supported gaps. Report what was filled, preserved, left unresolved, and which chapters were inspected. Do not run the five-phase analysis or require its JSON output for this workflow.
+
+## Chapter-group outline generation
+
+Trigger this workflow whenever the user asks to generate, complete, extract, expand, or reformat a novel's chapter-group outline (章节组细纲), even if they do not explicitly name this Skill.
+
+1. Read and use `skill://novel-analysis-craft/references/chapter-group-outline-template.md` as the required structure. Preserve its section headings and character-state table; do not omit fields just because the user asks briefly.
+2. Before filling a project outline, inspect the actual chapter paths and relevant prose, plus setting/outline.md, setting/progress.md, setting/character-states.md, and existing chapter-group plans as applicable. Actual written prose and paths outrank stale summaries. Do not turn unwritten planning material into established events.
+3. By default, plan only the next contiguous group and let the narrative unit determine its size (usually 3–8 chapters). If the user explicitly requests the whole book or a larger span, cover that requested range with contiguous groups and report any unavailable or unprocessed chapters; do not silently stop at one group.
+4. Fill each chapter's purpose, 3–5 plot-affecting beats, turning result, and connection to the following chapter. Keep the beats causal and executable, not a recap of background.
+5. In the character table, include only characters materially affected in the group. Describe group-initial and group-final states from evidence; leave unknown details unspecified rather than inventing them.
+6. For completed chapters, treat the document as a retrospective extraction: the chapter range, actual outcomes, and real unresolved questions must be source-grounded. The ending hook records what the written group actually hands off; it must not reveal or invent future events. Use “无” when there is no author decision still required.
+
+## Novel analysis workflow
+
+The numbered sections below apply only when the user asks for novel analysis, technique extraction, or writing practice.
 
 ## 1. Intake and boundaries
 
@@ -26,7 +42,7 @@ Turn supplied novel material into a traceable analysis and a small set of usable
 3. When text or notes are supplied, ground specific claims in them. Prefer paraphrase, use brief exact quotations only from visible material, and turn techniques into original exercises rather than imitating distinctive prose.
 4. Establish chapter coverage when chapters are supplied. Without visible source material, use `title_only` scope and unknown chapter coverage; do not invent chapter IDs, locations, quotations, or evidence records.
 
-Use prompts/00-intake.md. If the user supplied source in an informal format, create stable IDs such as ch01 and c001 without changing the source.
+Read `skill://novel-analysis-craft/references/prompts/00-intake.md`. If the user supplied source in an informal format, create stable IDs such as ch01 and c001 without changing the source.
 
 ## 2. Choose depth
 
@@ -44,21 +60,21 @@ When evidence is sparse, continue with explicitly tentative interpretations and 
 
 Work in order. Keep source-backed claims separate from tentative interpretations. Cite evidence IDs when source material supports a claim; use empty `evidence_refs` and low confidence for unsourced inferences or evaluations.
 
-1. **Skeleton** — use prompts/01-skeleton.md. Write a 200–300 Chinese-character synopsis when the supplied scope supports one, a one-sentence story, the protagonist's goal, the central resistance, the causal spine, opening/setup/climax/ending, and a short counterfactual about the opening. Mark provisional structure if coverage is incomplete.
-2. **Flesh** — use prompts/02-flesh.md. Map subplots to characters, chapters, and main-plot function; run a deletion test. Analyze the protagonist's behavior, desire, weakness, and change; analyze the principal resistance (including a non-person force); and choose 2–3 supporting characters when evidence permits. Distinguish observed behavior from interpretation.
-3. **Soul** — use prompts/03-soul.md. Identify 1–2 central themes, show how events and choices express them, map the dominant emotional movement and turning points, and note strengths and weaknesses with evidence.
-4. **Technique extraction** — use prompts/04-techniques.md. Select the depth-appropriate number of techniques. For each, explain the author's observable move, reader effect, mechanism, counterfactual, conditions for reuse, pitfalls, and a transformed application. Store each as a structured technique card.
-5. **Practice** — use prompts/05-practice.md. Convert a selected card into a reusable writing SOP, then produce a 500–1500 Chinese-character practice assignment and an evaluation rubric. The default deliverable is the assignment and rubric; write or assess the practice passage only when the user asks or supplies a draft. Evaluate against the technique and the user's own goals, not against copied source wording.
+1. **Skeleton** — read `skill://novel-analysis-craft/references/prompts/01-skeleton.md`. Write a 200–300 Chinese-character synopsis when the supplied scope supports one, a one-sentence story, the protagonist's goal, the central resistance, the causal spine, opening/setup/climax/ending, and a short counterfactual about the opening. Mark provisional structure if coverage is incomplete.
+2. **Flesh** — read `skill://novel-analysis-craft/references/prompts/02-flesh.md`. Map subplots to characters, chapters, and main-plot function; run a deletion test. Analyze the protagonist's behavior, desire, weakness, and change; analyze the principal resistance (including a non-person force); and choose 2–3 supporting characters when evidence permits. Distinguish observed behavior from interpretation.
+3. **Soul** — read `skill://novel-analysis-craft/references/prompts/03-soul.md`. Identify 1–2 central themes, show how events and choices express them, map the dominant emotional movement and turning points, and note strengths and weaknesses with evidence.
+4. **Technique extraction** — read `skill://novel-analysis-craft/references/prompts/04-techniques.md`. Select the depth-appropriate number of techniques. For each, explain the author's observable move, reader effect, mechanism, counterfactual, conditions for reuse, pitfalls, and a transformed application. Store each as a structured technique card.
+5. **Practice** — read `skill://novel-analysis-craft/references/prompts/05-practice.md`. Convert a selected card into a reusable writing SOP, then produce a 500–1500 Chinese-character practice assignment and an evaluation rubric. The default deliverable is the assignment and rubric; write or assess the practice passage only when the user asks or supplies a draft. Evaluate against the technique and the user's own goals, not against copied source wording.
 
 ## 4. Evidence and confidence
 
-Use the rules in references/evidence-and-coverage.md. Give each available evidence item a stable ID (E001...), source chunk, chapter, and locator. If page or paragraph numbers were not supplied, cite the chapter and chunk ID; never fabricate finer precision. Claims without source evidence may remain as low-confidence inferences or evaluations with empty `evidence_refs`; say what is uncertain. Grounded inferences explain their evidence and confidence.
+Use `skill://novel-analysis-craft/references/evidence-and-coverage.md`. Give each available evidence item a stable ID (E001...), source chunk, chapter, and locator. If page or paragraph numbers were not supplied, cite the chapter and chunk ID; never fabricate finer precision. Claims without source evidence may remain as low-confidence inferences or evaluations with empty `evidence_refs`; say what is uncertain. Grounded inferences explain their evidence and confidence.
 
 Keep quotes brief and exact. If the source is not visible, do not quote. The analysis should remain useful through paraphrase and precise locators.
 
 ## 5. Long works, batches, and recovery
 
-For long works, process only the new batch plus any earlier evidence needed to test continuity. Maintain an output checkpoint after every batch using the structure in templates/output.md and the output schema. Preserve:
+For long works, process only the new batch plus any earlier evidence needed to test continuity. Maintain an output checkpoint after every batch using `skill://novel-analysis-craft/references/templates/output.md` and `skill://novel-analysis-craft/references/schemas/output.schema.json`. Preserve:
 
 - expected, received, and processed chapter IDs;
 - evidence IDs and a source chunk manifest (chunk ID, chapter ID, SHA-256 of the exact UTF-8 content, and an optional source reference);
@@ -66,7 +82,7 @@ For long works, process only the new batch plus any earlier evidence needed to t
 - unresolved questions, next source range, and the last processed chapter;
 - a correction log when new evidence changes an earlier interpretation.
 
-On resume, read the saved checkpoint and new batch. Confirm the work title matches; compare each incoming chunk ID, chapter ID, and content SHA-256 with the checkpoint manifest. A repeated ID with different content is a conflict, not new evidence. Process only unprocessed chunks, and then revisit earlier claims only when new evidence bears on them. Do not silently overwrite a claim; log the old claim, new evidence, and revised conclusion. Never call the whole novel complete while expected chapters remain unreceived or unprocessed. The coverage rules are detailed in references/evidence-and-coverage.md. For JSON batches, run `python scripts/validate_output.py <checkpoint.json> --input <new-input.json>` before resuming. A version 1.0 checkpoint has no source manifest and must be rebuilt from its original inputs before ID reuse can be checked.
+On resume, read `skill://novel-analysis-craft/references/prompts/06-resume-and-finalize.md`, the saved checkpoint, and the new batch. Confirm the work title matches; compare each incoming chunk ID, chapter ID, and content SHA-256 with the checkpoint manifest. A repeated ID with different content is a conflict, not new evidence. Process only unprocessed chunks, and then revisit earlier claims only when new evidence bears on them. Do not silently overwrite a claim; log the old claim, new evidence, and revised conclusion. Never call the whole novel complete while expected chapters remain unreceived or unprocessed. The coverage rules are detailed in the evidence reference above. When the installed Skill directory and Python are accessible, run `python scripts/validate_output.py <checkpoint.json> --input <new-input.json>` before resuming a JSON batch. A version 1.0 checkpoint has no source manifest and must be rebuilt from its original inputs before ID reuse can be checked.
 
 > 🔴 **CHECKPOINT · STOP** — 续跑时**必须**先做三步：① 核对作品名与 chunk ID/章节/内容哈希，冲突则暂停合并；② 对照 `expected_chapter_ids` 与 `processed_chapter_ids` 确认增量；③ 仅当新证据明确推翻旧 claim 时走修订流程，否则原 evidence / claim 一律保留。任何"无声覆盖"行为视为 skill 失效。
 
@@ -74,10 +90,10 @@ On resume, read the saved checkpoint and new batch. Confirm the work title match
 
 Return both:
 
-1. a readable Chinese report following templates/output.md; and
-2. a structured JSON object following schemas/output.schema.json (version 1.1, including `source_chunks`), unless the user explicitly asks for Markdown only.
+1. a readable Chinese report following `skill://novel-analysis-craft/references/templates/output.md`; and
+2. a structured JSON object following `skill://novel-analysis-craft/references/schemas/output.schema.json` (version 1.1, including `source_chunks`), unless the user explicitly asks for Markdown only.
 
-Include technique cards in a separately reusable section or file when helpful. Before calling the work complete, apply references/quality-gates.md. If Python is available and a JSON file was created, run python scripts/validate_output.py <output.json> from this skill folder and fix reported structural or evidence-link errors. This check does not judge literary quality or establish that a citation is true; the model must still verify the claims against the supplied source.
+Include technique cards in a separately reusable section or file when helpful. Before calling the work complete, apply `skill://novel-analysis-craft/references/quality-gates.md`. If the installed Skill directory and Python are accessible and a JSON file was created, run `python scripts/validate_output.py <output.json>` from the Skill folder and fix reported structural or evidence-link errors. Otherwise check the output manually against the accessible schema and evidence reference. The script does not judge literary quality or establish that a citation is true; verify claims against the supplied source.
 
 > 🔴 **CHECKPOINT · STOP** — 调用 `validate_output.py` **之前**必须自检：① 有来源的 claim 是否引用对应 evidence ID，无来源的判断是否明确为低置信度推断或评价；② coverage 是否与 received/processed 一致；③ practice 阶段 draft_status 是否真实反映"未提交"。脚本只查结构与引用，**不替代**模型对可用材料的核对——脚本通过 ≠ 分析完成。
 

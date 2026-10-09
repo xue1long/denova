@@ -11,4 +11,4 @@
 7. 如实确认五个阶段状态，包括练习草稿是否已提交和评估。
 8. 返回可读报告、结构化结果、未解决缺口和明确下一步。
 
-遵循 references/quality-gates.md。有 JSON 时可运行内置检查器。检查器只核对结构和引用链接，不替代原文审阅。
+遵循 `skill://novel-analysis-craft/references/quality-gates.md`。只有能访问已安装 Skill 目录及 Python 时才运行内置检查器；否则对照可读取的 Schema 手动核对结构。检查器只核对结构和引用链接，不替代原文审阅。

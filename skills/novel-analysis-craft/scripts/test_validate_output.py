@@ -73,7 +73,7 @@ class ValidateOutputTests(unittest.TestCase):
         self.assertEqual(status, 0, message)
         if importlib.util.find_spec("jsonschema"):
             import jsonschema
-            schema = json.loads((ROOT / "schemas/output.schema.json").read_text(encoding="utf-8"))
+            schema = json.loads((ROOT / "references/schemas/output.schema.json").read_text(encoding="utf-8"))
             jsonschema.Draft202012Validator(schema).validate(output)
 
     def test_unsourced_observation_is_rejected(self):
@@ -87,7 +87,7 @@ class ValidateOutputTests(unittest.TestCase):
     def test_title_only_input_needs_no_rights_or_source(self):
         import jsonschema
 
-        schema = json.loads((ROOT / "schemas/input.schema.json").read_text(encoding="utf-8"))
+        schema = json.loads((ROOT / "references/schemas/input.schema.json").read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator(schema).validate({
             "schema_version": "1.0", "work": {"title": "A Novel"},
             "analysis": {"mode": "quick", "scope": "title_only"},
@@ -119,7 +119,7 @@ class ValidateOutputTests(unittest.TestCase):
         import jsonschema
 
         for kind in ("input", "output"):
-            schema = json.loads((ROOT / f"schemas/{kind}.schema.json").read_text(encoding="utf-8"))
+            schema = json.loads((ROOT / f"references/schemas/{kind}.schema.json").read_text(encoding="utf-8"))
             for path in ROOT.glob(f"examples/**/*.{kind}.json"):
                 with self.subTest(path=path.name):
                     jsonschema.Draft202012Validator(schema).validate(json.loads(path.read_text(encoding="utf-8")))

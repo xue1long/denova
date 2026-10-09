@@ -12,4 +12,4 @@
 
 有可见来源的判断标 evidence ID；其他判断标低置信度且不伪造引用。性格形容词本身不是证据。阻力可以来自社会、制度、环境或角色内在矛盾，不要默认存在传统反派。
 
-按 references/quality-gates.md 检查门槛。把 ID 和未解决问题保存至 checkpoint。
+按 `skill://novel-analysis-craft/references/quality-gates.md` 检查门槛。把 ID 和未解决问题保存至 checkpoint。

@@ -14,4 +14,4 @@
 
 将机制写成可执行原则，不只写“悬念好”或“人物鲜明”。有来源时附 evidence ID；无来源时留空并标低置信度。引文保持最短；不得模仿原文或作者的辨识性风格。
 
-生成稳定卡片 ID，并填写 templates/technique-card.md 与输出 Schema 所需字段。无法合理提出足量技巧时说明不足，不虚构细节凑数。
+生成稳定卡片 ID，并填写 `skill://novel-analysis-craft/references/templates/technique-card.md` 与输出 Schema 所需字段。无法合理提出足量技巧时说明不足，不虚构细节凑数。

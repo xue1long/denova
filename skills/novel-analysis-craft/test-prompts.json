@@ -4,7 +4,7 @@
     "name": "happy-path-quick-depth",
     "scenario": "happy_path",
     "prompt": "请按 quick 深度拆解 examples/quick-demo.input.json 中的原创短篇《钟响三次》。输出五阶段中文报告和结构化 JSON；每项小说分析判断都链接到实际可见的来源证据。",
-    "expected": "五阶段报告、至少一张技巧卡、一项练习任务；来源清单与证据可回查；输出符合 schemas/output.schema.json 1.1 并通过 scripts/validate_output.py。",
+    "expected": "五阶段报告、至少一张技巧卡、一项练习任务；来源清单与证据可回查；输出符合 references/schemas/output.schema.json 1.1 并通过 scripts/validate_output.py。",
     "source_ref": "examples/quick-demo.input.json",
     "scope_hint": "原创短篇 ch01–ch03"
   },
@@ -22,8 +22,17 @@
     "name": "resume-same-work",
     "scenario": "complex_workflow",
     "prompt": "请从 examples/quick-demo.output.json 继续拆解同一部原创短篇《钟响三次》。新批次在 examples/quick-demo-resume.input.json，只包含 ch04。先验证作品名及 chunk ID/内容哈希，再处理新章节，保留 E001–E003；ch04 若改变 C006，请记录真实修订。",
-    "expected": "同一作品的来源清单与证据完整保留；仅新增 ch04/E004；C006 有新证据时才修订并写 correction_log；输出符合 schemas/output.schema.json 1.1，内置校验器通过。",
+    "expected": "同一作品的来源清单与证据完整保留；仅新增 ch04/E004；C006 有新证据时才修订并写 correction_log；输出符合 references/schemas/output.schema.json 1.1，内置校验器通过。",
     "source_ref": "examples/quick-demo.output.json + examples/quick-demo-resume.input.json",
     "scope_hint": "原创短篇 ch01–ch04 续跑"
+  },
+  {
+    "id": 4,
+    "name": "denova-book-setting-backfill",
+    "scenario": "workspace_update",
+    "prompt": "在当前 Denova 书籍项目中补全书籍设定。先检查实际章节、ideas.md、CREATOR.md、setting 下的文件和 Lore；只补缺失或模板栏目，保留已有作者内容。",
+    "expected": "读取 book-setting-backfill.md 和 book-setting-templates.md；按实际内容审计缺失文件和空白栏目，匹配已有等价标题；用 Denova 工具补全有来源支持的内容，回读验证；不覆盖作者规则、不编造偏好或未写未来剧情，Lore 查重；重复运行不新增重复内容；报告修改、保留、待确认项和章节覆盖；不输出五阶段分析 JSON。",
+    "source_ref": "active Denova book project",
+    "scope_hint": "现有章节与项目书籍设定"
   }
 ]
