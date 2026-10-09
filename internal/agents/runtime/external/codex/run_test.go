@@ -63,6 +63,33 @@ func TestReportedUsageReplacesCumulativeTotalsAndSurvivesFailure(t *testing.T) {
 	}
 }
 
+func TestProviderErrorShapesPreserveMessage(t *testing.T) {
+	for _, test := range []struct {
+		name, method, want string
+		value              any
+	}{
+		{"notification string", "error", "App Server turn error: model request failed", "model request failed"},
+		{"notification object", "error", "App Server turn error: model request failed", map[string]string{"message": "model request failed"}},
+		{"failed turn string", "turn/completed", "App Server turn failed: model request failed", "model request failed"},
+		{"failed turn object", "turn/completed", "App Server turn failed: model request failed", map[string]string{"message": "model request failed"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newProtocolFixture(t)
+			done := startFixtureTurn(t, t.Context(), fixture, &testHost{})
+			payload := map[string]any{"threadId": "thread", "turnId": "turn", "error": test.value}
+			if test.method == "turn/completed" {
+				payload["turn"] = map[string]any{"id": "turn", "status": "failed", "error": test.value}
+				delete(payload, "error")
+			}
+			fixture.send(t, "", test.method, payload)
+			result := <-done
+			if result.err == nil || result.err.Error() != test.want {
+				t.Fatalf("provider error was lost: %v", result.err)
+			}
+		})
+	}
+}
+
 func TestCancelBeforeTurnStartReplyInterruptsAcceptedTurn(t *testing.T) {
 	fixture := newProtocolFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())

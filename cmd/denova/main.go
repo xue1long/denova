@@ -341,7 +341,18 @@ func findAvailablePort(preferred string, attempts int, reservedPorts ...string) 
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("no available port found in %d-%d", start+1, start+attempts)
+	for attempt := 0; attempt < 20; attempt++ {
+		listener, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			return "", fmt.Errorf("no available frontend port: %w", err)
+		}
+		candidate := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+		_ = listener.Close()
+		if !portReserved(candidate, reservedPorts...) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no available frontend port outside reserved ports")
 }
 
 func portReserved(port string, reservedPorts ...string) bool {

@@ -260,7 +260,35 @@ Directory structure:
 4. If actual prose materially diverges from the outline, ask the author whether to update the outline or use the next group plan to return toward the main arc.
 5. Write setting/chapter-groups/groupXX-short-objective.md. Name it with the group sequence and short-term narrative objective, not a fixed chapter range.
 6. Keep the plan brief and executable, preferably 800-1200 Han characters for Chinese projects. Limit each chapter arrangement to 3-5 key points and avoid long background explanations, recaps of completed chapters, and prose-level description.
-7. Include the group objective, suggested chapters, connection from previous prose, within-group conflict curve, per-chapter arrangement, setup/payoff, ending hook, and open questions. When space is tight, preserve information that affects the next chapter or author decisions.
+7. Use this Markdown structure, translating headings into the project's writing language. Omit inapplicable entries instead of inventing filler. Keep key events as a cross-chapter causal chain rather than repeating per-chapter beats:
+   ~~~markdown
+   # Group XX | short objective
+   - Planned chapters: chapter N through chapter M, adjusted to the narrative unit
+   - Continuation: where the actual prose leaves off
+   - Group objective: the change this group must achieve
+   - Conflict curve: trigger -> escalation -> turn -> result
+   ## Chapter arrangements
+   ### Chapter N | working title
+   - Purpose: ...
+   - Main beats: 3-5 plot-changing points
+   - Turn and result: ...
+   - Next-chapter transition: ...
+   ## Key events
+   1. Triggering event -> resulting change
+   2. Character choice -> consequence
+   3. Group turn -> next question
+   ## Character arcs
+   | Character | Starting state | Pressure and choice | End-of-group change |
+   | --- | --- | --- | --- |
+   | Main character | ... | ... | ... |
+   ## Payoffs and carryovers
+   - Payoffs: earlier setup -> chapter and result
+   - Carryovers: unresolved thread -> how the next group takes it up
+   ## Group ending
+   - Ending hook: ...
+   - Decisions for the author: ...
+   ~~~
+   Repeat the chapter subsection for each planned chapter.
 
 ### Continuing a chapter
 1. Read setting/outline.md, setting/progress.md, and setting/character-states.md. Combine resident lore bodies and the Markdown Lore Index to confirm stable setting and current character state. Use query_lore_items with names and detail=full for a known unique name; use query_lore_items filters and detail=full to discover relevant settings and reusable material.

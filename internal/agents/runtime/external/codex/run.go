@@ -29,11 +29,27 @@ type threadReply struct {
 func (c *Client) Version() string { return c.version }
 
 type turnState struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Error  *struct {
+	ID     string         `json:"id"`
+	Status string         `json:"status"`
+	Error  *providerError `json:"error"`
+}
+
+type providerError struct {
+	Message string `json:"message"`
+}
+
+func (e *providerError) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		return json.Unmarshal(data, &e.Message)
+	}
+	var value struct {
 		Message string `json:"message"`
-	} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	e.Message = value.Message
+	return nil
 }
 
 // Run resumes aligned threads and forks read-only evaluations. Model and question waits
@@ -366,9 +382,7 @@ func (c *Client) runTurn(ctx context.Context, sub *subscription, threadID, turnI
 						Total     int `json:"totalTokens"`
 					} `json:"total"`
 				} `json:"tokenUsage"`
-				Error struct {
-					Message string `json:"message"`
-				} `json:"error"`
+				Error providerError `json:"error"`
 			}
 			if err := json.Unmarshal(msg.Params, &event); err != nil {
 				return external.Result{}, err

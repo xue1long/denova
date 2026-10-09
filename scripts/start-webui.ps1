@@ -10,10 +10,6 @@ $logDirectory = Join-Path $repoRoot 'log'
 $stateFilePattern = 'dev-windows-*.json'
 $localGo = Join-Path $env:USERPROFILE '.local\go\bin\go.exe'
 $corepackPnpm = Join-Path $env:ProgramFiles 'nodejs\node_modules\corepack\shims\pnpm.cmd'
-$backendPort = 8080
-$frontendPort = 5173
-$frontendUrl = "http://127.0.0.1:$frontendPort/"
-$backendUrl = "http://127.0.0.1:$backendPort"
 
 function Resolve-RequiredCommand {
     param(
@@ -30,6 +26,27 @@ function Resolve-RequiredCommand {
         return $FallbackPath
     }
     throw "Missing required command: $Name. Install the Windows dependency first."
+}
+
+function Get-AvailablePort {
+    param([int]$Preferred, [int]$Exclude = 0)
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $candidate = if ($attempt -eq 0) { $Preferred } else { 0 }
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $candidate)
+        try {
+            $listener.Start()
+            $port = [int]$listener.LocalEndpoint.Port
+            if ($port -ne $Exclude) { return $port }
+        }
+        catch {
+            if ($candidate -eq 0) { throw }
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
+    throw "Could not find an available TCP port."
 }
 
 function Stop-RepoDevProcesses {
@@ -114,17 +131,29 @@ try {
 
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
+    $nodeModules = Join-Path $repoRoot 'web\node_modules'
+    if (-not (Test-Path -LiteralPath $nodeModules)) {
+        throw "web/node_modules is missing. Run 'pnpm install' inside web/ first."
+    }
+
     Write-Host 'Stopping any prior Denova dev processes for this repo (if any)...'
     Stop-RepoDevProcesses
     Start-Sleep -Seconds 1
 
-    Write-Host 'Starting backend (go run ./cmd/denova --dev --dev-mode --no-open)...'
+    # shortcut: probes release sockets before Denova binds; hand off listeners if startup races occur.
+    $backendPort = Get-AvailablePort -Preferred 8080
+    $frontendPort = Get-AvailablePort -Preferred 5173 -Exclude $backendPort
+    $backendUrl = "http://127.0.0.1:$backendPort"
+    $frontendUrl = "http://127.0.0.1:$frontendPort/"
+
+    Write-Host "Starting Denova (backend $backendPort, frontend $frontendPort)..."
     $goProcess = Start-Process `
         -FilePath $goExecutable `
-        -ArgumentList @('run', './cmd/denova', '--dev', '--dev-mode', '--no-open') `
+        -ArgumentList @('run', './cmd/denova', '--dev', '--dev-mode', '--no-open', '--port', "$backendPort", '--frontend-port', "$frontendPort") `
         -WorkingDirectory $repoRoot `
         -RedirectStandardOutput (Join-Path $logDirectory 'dev-backend.out.log') `
         -RedirectStandardError  (Join-Path $logDirectory 'dev-backend.err.log') `
+        -WindowStyle Hidden `
         -PassThru
 
     $statePath = Join-Path $logDirectory "dev-windows-$($goProcess.Id).json"
@@ -137,22 +166,9 @@ try {
     }
     Write-Host 'Backend is ready.'
 
-    Write-Host 'Starting Vite frontend (pnpm --dir web dev)...'
-    $nodeModules = Join-Path $repoRoot 'web\node_modules'
-    if (-not (Test-Path -LiteralPath $nodeModules)) {
-        throw "web/node_modules is missing. Run 'pnpm install' inside web/ first."
-    }
-    Start-Process `
-        -FilePath $pnpmExecutable `
-        -ArgumentList @('--dir', 'web', 'dev', '--port', "$frontendPort", '--host', '127.0.0.1') `
-        -WorkingDirectory $repoRoot `
-        -RedirectStandardOutput (Join-Path $logDirectory 'dev-frontend.out.log') `
-        -RedirectStandardError  (Join-Path $logDirectory 'dev-frontend.err.log') `
-        -PassThru | Out-Null
-
     Write-Host "Waiting for Vite at $frontendUrl ..."
     if (-not (Wait-HttpReady -Url $frontendUrl -TimeoutSeconds 60)) {
-        throw "Vite did not become ready within 60 seconds. Check log\\dev-frontend.err.log."
+        throw "Vite did not become ready within 60 seconds. Check log\\dev-backend.err.log."
     }
     Write-Host "Vite is ready. Opening $frontendUrl ..."
     if (-not $SkipBrowser) {
@@ -162,12 +178,16 @@ try {
     Write-Host ''
     Write-Host 'Denova is running. Close this window or press Ctrl+C to stop.'
     Write-Host "Backend log : log\\dev-backend.out.log"
-    Write-Host "Frontend log: log\\dev-frontend.out.log"
+    Write-Host "Error log   : log\\dev-backend.err.log"
     Write-Host ''
 
     while (-not $goProcess.HasExited) {
         Start-Sleep -Seconds 1
     }
+}
+catch {
+    if ($statePath) { Stop-RepoDevProcesses }
+    throw
 }
 finally {
     if ($statePath -and (Test-Path -LiteralPath $statePath)) {

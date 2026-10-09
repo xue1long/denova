@@ -42,7 +42,19 @@ docs/tests/*
 .worktrees/
 .pnpm-store/
 .DS_Store
-.denova
+# Denova runtime data is per-machine; ship only curated skills.
+.denova/agents/
+.denova/backups/
+.denova/presets/
+.denova/projects/
+.denova/resource-exchange/
+.denova/runtime/
+.denova/stores/
+.denova/styles/
+.denova/conflicts/
+.denova/config.toml
+.denova/projects.json
+.denova/skills/.denova-locks/
 .nova
 prd
 .playwright-cli/
