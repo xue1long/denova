@@ -1,6 +1,7 @@
 ---
-name: novel-analysis-craft
-description: Use this skill whenever the user wants to systematically analyze or dissect a novel, story, or book; map plot structure, causality, characters, subplots, themes, or emotional turns; extract writing techniques into reusable cards or a writing SOP; analyze a long work in chapter batches and resume later; or design and assess a practice exercise. 当用户要求小说拆解、提取写作技巧、分章节续拆、生成技巧卡或评估练习时也要使用。Keep every claim tied to supplied source evidence and report coverage honestly.
+name: "novel-analysis-craft"
+description: "Use this skill whenever the user wants to systematically analyze or dissect a novel, story, or book; map plot structure, causality, characters, subplots, themes, or emotional turns; extract writing techniques into reusable cards or a writing SOP; analyze a long work in chapter batches and resume later; or design and assess a practice exercise. 当用户要求小说拆解、提取写作技巧、分章节续拆、生成技巧卡或评估练习时也要使用。Keep every claim tied to supplied source evidence and report coverage honestly."
+category: "general"
 ---
 
 # Novel Analysis and Craft Extraction
