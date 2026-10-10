@@ -2,6 +2,17 @@
 
 Thanks for helping improve Denova. This project is in beta, so contribution work should favor clear product improvements, simple implementation, and readable code over broad backwards compatibility.
 
+## Local AVG Engine (for Developers)
+
+`internal/extensions/avgengine/` and its integration checks (`avgengine_local_test.go`, `avgengine.local.spec.ts`, `avgengine-local.ts`) are **not** part of this public repository — they are distributed separately.
+
+To enable local AVG engine development:
+1. Pull the engine from the internal repository: **TODO: replace with internal repo URL**
+2. Place its contents under `internal/extensions/avgengine/`
+3. Restore the matching test files (`avgengine_local_test.go`, `avgengine.local.spec.ts`, `avgengine-local.ts`) if needed
+
+CI does not build the AVG engine, so PRs without it will still pass.
+
 ## Setup
 
 Denova requires Go 1.26.6+, Node.js 22.13+, and pnpm.
@@ -23,6 +34,18 @@ Useful local commands:
 ```
 
 If a frontend command is missing, try the project script first, then use `npx` when appropriate. If port `5173` is already occupied by the user's Vite process, do not kill or replace it; use the existing hot-reload page.
+
+### After Cloning
+
+`./scripts/bootstrap.sh` handles Go modules and backend build, but it does not initialize runtime data.
+
+Runtime data (`.denova/`) is per-machine and not version-controlled. After cloning:
+
+1. Copy custom parts of the root `config.toml` (e.g., port overrides, model endpoints) to `.denova/config.toml`
+2. Start the backend — the frontend will guide you to create your first workspace
+3. For local AVG engine development, see the **Local AVG Engine** section above
+
+The root `config.toml` is the startup loader field template; copy only the parts you want to override.
 
 ## Development Principles
 

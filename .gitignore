@@ -20,25 +20,10 @@ web/playwright-report/
 web/test-results/
 internal/webfs/dist/
 plan.md
-docs/*
-!docs/tests/
-docs/tests/*
-!docs/tests/large-change-regression-checklist.md
-!docs/automation-project-agent.md
-!docs/plugin-developer-guide.md
-!docs/game-developer-guide.md
-!docs/plugin-platform-design.md
-!docs/plugin-extensibility-audit-and-plan.md
-!docs/plugin-platform-api.md
-!docs/extension-development.md
-!docs/claude-runtime.md
-!docs/ci-performance.md
-!docs/skills-library.md
-!docs/lore-index.md
-!docs/automatic-updates.md
-!docs/resource-pack-import-export-design.md
-!docs/speech.md
-!docs/agent-runtime-session-design-audit.md
+# Documents are tracked by default; only the temporary/personal subtrees below are ignored.
+docs/drafts/
+docs/private/
+docs/.tmp/
 .worktrees/
 .pnpm-store/
 .DS_Store
@@ -61,6 +46,18 @@ prd
 tmp/
 .tmp/
 /npm/
+
+# Secrets and credentials — never commit.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.*
+credentials.*
+*.secret
 
 # Local AVG engine and its integration checks are not distributed.
 /internal/extensions/avgengine/
