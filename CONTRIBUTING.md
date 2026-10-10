@@ -6,8 +6,10 @@ Thanks for helping improve Denova. This project is in beta, so contribution work
 
 `internal/extensions/avgengine/` and its integration checks (`avgengine_local_test.go`, `avgengine.local.spec.ts`, `avgengine-local.ts`) are **not** part of this public repository — they are distributed separately.
 
+**Solo-developer setup**: For cross-machine sync, host the engine in a private repository (recommended: `https://github.com/xue1long/avgengine` — TODO: create the repo and replace this URL once it exists).
+
 To enable local AVG engine development:
-1. Pull the engine from the internal repository: **TODO: replace with internal repo URL**
+1. Pull the engine from the private repository: `git clone https://github.com/xue1long/avgengine.git`
 2. Place its contents under `internal/extensions/avgengine/`
 3. Restore the matching test files (`avgengine_local_test.go`, `avgengine.local.spec.ts`, `avgengine-local.ts`) if needed
 
