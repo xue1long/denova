@@ -1,0 +1,98 @@
+# Denova user-level configuration template.
+# Copy this file to `.denova/config.toml` and edit as needed.
+#
+# Settings precedence (lowest to highest):
+#   1. built-in defaults
+#   2. startup config (./config.toml)        ← bundled with the repo
+#   3. user config (<denova_dir>/config.toml) ← this file
+#   4. Project settings (per-project overrides)
+#
+# Environment overrides (e.g., OPENAI_API_KEY, OPENAI_MODEL) take precedence
+# at runtime and are NOT written back to this file.
+#
+# This file is OPTIONAL. If you do not need to override startup defaults,
+# delete it and let Denova fall back to the root ./config.toml.
+#
+# Omit an optional field to inherit its value from the startup config.
+# Empty values have field-specific semantics — see root ./config.toml for details.
+
+# ---------------------------------------------------------------------------
+# Common overrides
+# ---------------------------------------------------------------------------
+
+# Optional port overrides. Defaults are backend 8080 and frontend 5173;
+# user settings and environment overrides can select other ports.
+# If port 5173 is already occupied by your Vite process, set frontend_port
+# to a free port (e.g., 5112) instead of killing the existing one.
+# backend_port = 8111
+# frontend_port = 5112
+
+# Bundled, read-only Skills directory loaded at startup.
+# skills_dir = "./skills"
+
+# Move user data to a different directory.
+# Only startup config and DENOVA_DIR select the data root;
+# user/Project settings do not.
+# denova_dir = "./.denova"
+
+# Recursive file-tree loading falls back to incremental loading above this limit.
+# Default: 100000 entries; maximum: 1000000. Restart the backend after changing it.
+# project_file_tree_entry_limit = 100000
+
+# ---------------------------------------------------------------------------
+# Agent execution overrides
+# ---------------------------------------------------------------------------
+
+# model_max_retries = 5
+# Concurrent parallel_read operations: 1-64.
+# agent_tool_parallelism = 8
+# Concurrent SubAgents under one parent session: 1-32.
+# agent_subagent_parallelism = 4
+
+# Default image profile; configure the profiles below.
+# default_image_api_profile_id = "default"
+
+# ---------------------------------------------------------------------------
+# Model endpoints (uncomment and fill in)
+# ---------------------------------------------------------------------------
+
+# [[model_endpoints]]
+# id = "my-connection"
+# provider = "openai-compatible"
+# protocol = "openai-chat-completions"
+# base_url = "https://models.example.com/v1"
+# api_key = ""
+#
+# [[model_profiles]]
+# id = "my-model"
+# endpoint_id = "my-connection"
+# model = "my-model"
+#
+# [agent_models.default]
+# profile_id = "my-model"
+
+# ---------------------------------------------------------------------------
+# Image API profiles (uncomment and fill in)
+# ---------------------------------------------------------------------------
+
+# [[image_api_profiles]]
+# id = "default"
+# name = "My image service"
+# provider = "openai"
+# protocol = "openai-images"
+# base_url = "https://api.openai.com/v1"
+# api_key = ""
+# model = "gpt-image-2"
+# default_quality = "auto"
+# default_output_format = "png"
+
+# ---------------------------------------------------------------------------
+# Web access (SearXNG)
+# ---------------------------------------------------------------------------
+
+# [web_access]
+# searxng_base_url = "https://searx.example.com"
+# search_max_results = 10
+# search_provider_timeout_seconds = 10
+# fetch_max_response_kb = 8192
+# fetch_max_content_chars = 262144

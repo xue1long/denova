@@ -41,11 +41,11 @@ If a frontend command is missing, try the project script first, then use `npx` w
 
 Runtime data (`.denova/`) is per-machine and not version-controlled. After cloning:
 
-1. Copy custom parts of the root `config.toml` (e.g., port overrides, model endpoints) to `.denova/config.toml`
+1. (Optional) Copy `.denova/config.toml.example` to `.denova/config.toml` and uncomment only the fields you want to override — most users do not need this on day one
 2. Start the backend — the frontend will guide you to create your first workspace
 3. For local AVG engine development, see the **Local AVG Engine** section above
 
-The root `config.toml` is the startup loader field template; copy only the parts you want to override.
+The root `./config.toml` is the bundled startup config; `.denova/config.toml.example` is the user-layer override template.
 
 ## Development Principles
 
